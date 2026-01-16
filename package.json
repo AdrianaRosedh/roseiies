@@ -1,0 +1,15 @@
+{
+  "name": "roseiies",
+  "private": true,
+  "packageManager": "pnpm@10.0.0",
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck"
+  },
+  "devDependencies": {
+    "turbo": "^2.7.4",
+    "typescript": "^5.9.3"
+  }
+}
