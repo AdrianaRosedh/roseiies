@@ -1,0 +1,13 @@
+{
+  "name": "@roseiies/supabase",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./browser": "./browser.ts",
+    "./server": "./server.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.90.1"
+  }
+}

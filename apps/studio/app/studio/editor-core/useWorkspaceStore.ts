@@ -1,0 +1,581 @@
+"use client";
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import type {
+  ItemType,
+  LayoutDoc,
+  StudioItem,
+  StudioModule,
+  WorkspaceStore,
+  PlantBlock,
+} from "./types";
+
+const STORAGE_KEY = "roseiies:studio:workspace:v1";
+
+function uid(prefix: string) {
+  return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now()}`;
+}
+
+function seedStore(module: StudioModule): WorkspaceStore {
+  const g1 = { id: "olivea_garden_main", name: "Huerto Principal" };
+  const l1 = {
+    id: "layout_winter_2026",
+    gardenId: g1.id,
+    name: "Winter 2026",
+    published: true,
+    updatedAt: new Date().toISOString(),
+  };
+
+  const doc: LayoutDoc = {
+    version: 1,
+    canvas: module.defaults.canvas,
+    items: [],
+  };
+
+  return {
+    version: 1,
+    gardens: [g1],
+    layouts: [l1],
+    docs: { [l1.id]: doc },
+    activeGardenId: g1.id,
+    activeLayoutId: l1.id,
+  };
+}
+
+function loadStore(module: StudioModule): WorkspaceStore {
+  if (typeof window === "undefined") return seedStore(module);
+  const raw = window.localStorage.getItem(STORAGE_KEY);
+  if (!raw) return seedStore(module);
+  try {
+    const parsed = JSON.parse(raw) as WorkspaceStore;
+    if (!parsed || parsed.version !== 1) return seedStore(module);
+    return parsed;
+  } catch {
+    return seedStore(module);
+  }
+}
+
+function saveStore(state: WorkspaceStore) {
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function emptyDoc(module: StudioModule): LayoutDoc {
+  return { version: 1, canvas: module.defaults.canvas, items: [] };
+}
+
+function isEditableTarget(el: EventTarget | null) {
+  if (!el || !(el instanceof HTMLElement)) return false;
+  const tag = el.tagName.toLowerCase();
+  return (
+    tag === "input" ||
+    tag === "textarea" ||
+    tag === "select" ||
+    el.isContentEditable
+  );
+}
+
+export function useWorkspaceStore(module: StudioModule) {
+  const [mounted, setMounted] = useState(false);
+  const [state, setState] = useState<WorkspaceStore>(() => seedStore(module));
+
+  useEffect(() => {
+    setState(loadStore(module));
+    setMounted(true);
+  }, [module]);
+
+  useEffect(() => {
+    if (!mounted) return;
+    saveStore(state);
+  }, [state, mounted]);
+
+  const [tool, setTool] = useState<ItemType>("bed");
+
+  // ✅ multi-select
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  const [stageScale, setStageScale] = useState(1);
+  const [stagePos, setStagePos] = useState({ x: 40, y: 40 });
+
+  // Pan mode (spacebar)
+  const [panMode, setPanMode] = useState(false);
+
+  // Cursor and viewport center for cursor paste and quick insert
+  const cursorWorldRef = useRef<{ x: number; y: number } | null>(null);
+  const viewportCenterWorldRef = useRef<{ x: number; y: number } | null>(null);
+
+  // Clipboard supports multi-copy
+  const [clipboard, setClipboard] = useState<StudioItem[] | null>(null);
+
+  const doc = useMemo(() => {
+    const id = state.activeLayoutId;
+    if (!id) return emptyDoc(module);
+    return state.docs[id] ?? emptyDoc(module);
+  }, [state, module]);
+
+  const selected = useMemo(() => {
+    if (selectedIds.length === 0) return null;
+    // show first selected in inspector if single; otherwise multi-inspector
+    const first = doc.items.find((i) => i.id === selectedIds[0]) ?? null;
+    return first;
+  }, [doc.items, selectedIds]);
+
+  const selectedItems = useMemo(() => {
+    if (selectedIds.length === 0) return [];
+    const set = new Set(selectedIds);
+    return doc.items.filter((i) => set.has(i.id));
+  }, [doc.items, selectedIds]);
+
+  function updateDoc(patch: Partial<LayoutDoc>) {
+    const layoutId = state.activeLayoutId;
+    if (!layoutId) return;
+
+    setState((prev) => ({
+      ...prev,
+      docs: {
+        ...prev.docs,
+        [layoutId]: {
+          ...(prev.docs[layoutId] ?? emptyDoc(module)),
+          ...patch,
+        } as LayoutDoc,
+      },
+      layouts: prev.layouts.map((l) =>
+        l.id === layoutId ? { ...l, updatedAt: new Date().toISOString() } : l
+      ),
+    }));
+  }
+
+  function updateItem(id: string, patch: Partial<StudioItem>) {
+    updateDoc({
+      items: doc.items.map((it) => (it.id === id ? { ...it, ...patch } : it)),
+    });
+  }
+
+  function updateMeta(id: string, patch: Partial<StudioItem["meta"]>) {
+    updateDoc({
+      items: doc.items.map((it) =>
+        it.id === id ? { ...it, meta: { ...it.meta, ...patch } } : it
+      ),
+    });
+  }
+
+  function updateStyle(id: string, patch: Partial<StudioItem["style"]>) {
+    updateDoc({
+      items: doc.items.map((it) =>
+        it.id === id ? { ...it, style: { ...it.style, ...patch } } : it
+      ),
+    });
+  }
+
+  function setActiveGarden(gardenId: string) {
+    const firstLayout = state.layouts.find((l) => l.gardenId === gardenId) ?? null;
+    setState((prev) => ({
+      ...prev,
+      activeGardenId: gardenId,
+      activeLayoutId: firstLayout?.id ?? null,
+    }));
+    setSelectedIds([]);
+  }
+
+  function setActiveLayout(layoutId: string) {
+    setState((prev) => ({ ...prev, activeLayoutId: layoutId }));
+    setSelectedIds([]);
+  }
+
+  function newGarden() {
+    const name = window.prompt("New garden name (e.g., Invernadero):");
+    if (!name) return;
+
+    const g = { id: uid("garden"), name };
+    const l = {
+      id: uid("layout"),
+      gardenId: g.id,
+      name: "Layout 1",
+      published: false,
+      updatedAt: new Date().toISOString(),
+    };
+
+    setState((prev) => ({
+      ...prev,
+      gardens: [...prev.gardens, g],
+      layouts: [...prev.layouts, l],
+      docs: { ...prev.docs, [l.id]: emptyDoc(module) },
+      activeGardenId: g.id,
+      activeLayoutId: l.id,
+    }));
+    setSelectedIds([]);
+  }
+
+  function renameGarden() {
+    const active = state.gardens.find((g) => g.id === state.activeGardenId);
+    if (!active) return;
+    const name = window.prompt("Garden name:", active.name);
+    if (!name) return;
+    setState((prev) => ({
+      ...prev,
+      gardens: prev.gardens.map((g) =>
+        g.id === active.id ? { ...g, name } : g
+      ),
+    }));
+  }
+
+  function newLayout() {
+    if (!state.activeGardenId) return;
+    const count =
+      state.layouts.filter((l) => l.gardenId === state.activeGardenId).length + 1;
+
+    const l = {
+      id: uid("layout"),
+      gardenId: state.activeGardenId,
+      name: `Layout ${count}`,
+      published: false,
+      updatedAt: new Date().toISOString(),
+    };
+
+    setState((prev) => ({
+      ...prev,
+      layouts: [...prev.layouts, l],
+      docs: { ...prev.docs, [l.id]: emptyDoc(module) },
+      activeLayoutId: l.id,
+    }));
+
+    setSelectedIds([]);
+  }
+
+  function renameLayout() {
+    const active = state.layouts.find((l) => l.id === state.activeLayoutId);
+    if (!active) return;
+    const name = window.prompt("Layout name:", active.name);
+    if (!name) return;
+    setState((prev) => ({
+      ...prev,
+      layouts: prev.layouts.map((l) =>
+        l.id === active.id ? { ...l, name } : l
+      ),
+    }));
+  }
+
+  async function publishLayout() {
+    const active = state.layouts.find((l) => l.id === state.activeLayoutId);
+    const activeGarden = state.gardens.find((g) => g.id === state.activeGardenId);
+    
+    if (!active || !activeGarden) return;
+    
+    const res = await fetch("/api/publish-garden-layout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tenantId: "olivea",            // hardcode for now
+        gardenName: activeGarden.name, // match by name
+        layoutName: active.name,       // match by name
+        doc,
+      }),
+    });
+
+  const json = await res.json();
+  if (!res.ok) {
+    alert(`Publish failed: ${json?.error ?? "unknown error"}`);
+    return;
+  }
+
+  alert(`Published! Items written: ${json.itemsWritten}`);
+}
+
+  function deleteSelected() {
+    if (selectedIds.length === 0) return;
+    const set = new Set(selectedIds);
+    updateDoc({ items: doc.items.filter((i) => !set.has(i.id)) });
+    setSelectedIds([]);
+  }
+
+  function resetView() {
+    setStageScale(1);
+    setStagePos({ x: 40, y: 40 });
+  }
+
+  function addItemAtWorld(args: { type: ItemType; x: number; y: number }) {
+    const baseStyle = module.defaults.stylesByType[args.type];
+    const maxOrder = doc.items.reduce((m, it) => Math.max(m, it.order ?? 0), 0);
+
+    const item: StudioItem = {
+      id: uid(args.type),
+      type: args.type,
+      x: args.x,
+      y: args.y,
+      w: args.type === "path" ? 240 : args.type === "label" ? 220 : 200,
+      h: args.type === "path" ? 28 : args.type === "label" ? 44 : 120,
+      r: 0,
+      order: maxOrder + 1,
+      label:
+        args.type === "bed"
+          ? "Bed"
+          : args.type === "zone"
+            ? "Zone"
+            : args.type === "path"
+              ? "Path"
+              : args.type === "structure"
+                ? "Structure"
+                : "Label",
+      meta: {
+        status: args.type === "bed" ? "dormant" : undefined,
+        public: args.type === "bed" ? false : undefined,
+        plants: args.type === "bed" ? [] : undefined,
+      },
+      style: {
+        ...baseStyle,
+        shadow: baseStyle.shadow ? { ...baseStyle.shadow } : undefined,
+      },
+    };
+
+    updateDoc({ items: [...doc.items, item] });
+    setSelectedIds([item.id]);
+  }
+
+  // Cursor tracking
+  function setCursorWorld(pos: { x: number; y: number } | null) {
+    cursorWorldRef.current = pos;
+  }
+  function setViewportCenterWorld(pos: { x: number; y: number } | null) {
+    viewportCenterWorldRef.current = pos;
+  }
+
+  function quickInsert(type: ItemType) {
+    const center = viewportCenterWorldRef.current;
+    const x = center ? center.x - 90 : 200;
+    const y = center ? center.y - 60 : 200;
+    addItemAtWorld({ type, x, y });
+  }
+
+  // Multi-copy
+  function copySelected() {
+    if (selectedItems.length === 0) return;
+    setClipboard(
+      selectedItems.map((it) => ({
+        ...it,
+        meta: { ...it.meta, plants: it.meta.plants ? [...it.meta.plants] : it.meta.plants },
+        style: { ...it.style, shadow: it.style.shadow ? { ...it.style.shadow } : undefined },
+      }))
+    );
+  }
+
+  // Paste group under cursor, preserving relative layout
+  function pasteAtCursor() {
+    if (!clipboard || clipboard.length === 0) return;
+
+    const pos = cursorWorldRef.current;
+    const anchor = pos ?? viewportCenterWorldRef.current ?? { x: 240, y: 240 };
+
+    // Use the bbox of clipboard items and map it to cursor
+    const minX = Math.min(...clipboard.map((i) => i.x));
+    const minY = Math.min(...clipboard.map((i) => i.y));
+    const maxX = Math.max(...clipboard.map((i) => i.x + i.w));
+    const maxY = Math.max(...clipboard.map((i) => i.y + i.h));
+
+    const groupW = maxX - minX;
+    const groupH = maxY - minY;
+
+    const targetX = anchor.x - groupW / 2;
+    const targetY = anchor.y - groupH / 2;
+
+    const dx = targetX - minX;
+    const dy = targetY - minY;
+
+    const pasted = clipboard.map((it) => ({
+      ...it,
+      id: uid(it.type),
+      x: it.x + dx,
+      y: it.y + dy,
+      meta: { ...it.meta, plants: it.meta.plants ? [...it.meta.plants] : it.meta.plants },
+      style: { ...it.style, shadow: it.style.shadow ? { ...it.style.shadow } : undefined },
+    }));
+
+    updateDoc({ items: [...doc.items, ...pasted] });
+    setSelectedIds(pasted.map((p) => p.id));
+  }
+
+  // Bed plant blocks
+  function addPlantToBed(bedId: string) {
+    const bed = doc.items.find((i) => i.id === bedId);
+    if (!bed) return;
+    const plants = bed.meta.plants ?? [];
+    const p: PlantBlock = { id: uid("plant"), name: "Plant", color: "#5e7658" };
+    updateMeta(bedId, { plants: [...plants, p] });
+  }
+
+  function updatePlant(bedId: string, plantId: string, patch: Partial<PlantBlock>) {
+    const bed = doc.items.find((i) => i.id === bedId);
+    if (!bed) return;
+    const plants = bed.meta.plants ?? [];
+    updateMeta(bedId, {
+      plants: plants.map((p) => (p.id === plantId ? { ...p, ...patch } : p)),
+    });
+  }
+
+  function removePlant(bedId: string, plantId: string) {
+    const bed = doc.items.find((i) => i.id === bedId);
+    if (!bed) return;
+    const plants = bed.meta.plants ?? [];
+    updateMeta(bedId, { plants: plants.filter((p) => p.id !== plantId) });
+  }
+  function bringForward() {
+    if (selectedIds.length === 0) return;
+    updateDoc({
+      items: doc.items.map((it) => {
+        if (!selectedIds.includes(it.id)) return it;
+        return { ...it, order: (it.order ?? 0) + 1 };
+      }),
+    });
+  }
+
+  function sendBackward() {
+    if (selectedIds.length === 0) return;
+    updateDoc({
+      items: doc.items.map((it) => {
+        if (!selectedIds.includes(it.id)) return it;
+        return { ...it, order: (it.order ?? 0) - 1 };
+      }),
+    });
+  }
+
+  function bringToFront() {
+    if (selectedIds.length === 0) return;
+    const maxOrder = doc.items.reduce((m, it) => Math.max(m, it.order ?? 0), 0);
+    let i = 1;
+    updateDoc({
+      items: doc.items.map((it) => {
+        if (!selectedIds.includes(it.id)) return it;
+        return { ...it, order: maxOrder + i++ };
+      }),
+    });
+  }
+
+  function sendToBack() {
+    if (selectedIds.length === 0) return;
+    const minOrder = doc.items.reduce((m, it) => Math.min(m, it.order ?? 0), 0);
+    let i = 1;
+    updateDoc({
+      items: doc.items.map((it) => {
+        if (!selectedIds.includes(it.id)) return it;
+        return { ...it, order: minOrder - i++ };
+      }),
+    });
+  }
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (isEditableTarget(e.target)) return;
+
+      if (e.key === " ") {
+        e.preventDefault();
+        setPanMode(true);
+        return;
+      }
+
+      if (e.key === "Escape") {
+        setPanMode(false);
+        setSelectedIds([]);
+        return;
+      }
+
+      if (e.key === "Backspace" || e.key === "Delete") {
+        if (selectedIds.length) deleteSelected();
+        return;
+      }
+
+      const isMod = e.metaKey || e.ctrlKey;
+
+      if (isMod && (e.key === "c" || e.key === "C")) {
+        e.preventDefault();
+        copySelected();
+      }
+
+      if (isMod && (e.key === "v" || e.key === "V")) {
+        e.preventDefault();
+        pasteAtCursor();
+      }
+
+      if (isMod && (e.key === "d" || e.key === "D")) {
+        e.preventDefault();
+        copySelected();
+        pasteAtCursor();
+      }
+    }
+
+    function onKeyUp(e: KeyboardEvent) {
+      if (e.key === " ") {
+        e.preventDefault();
+        setPanMode(false);
+      }
+    }
+
+    function onBlur() {
+      setPanMode(false);
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedIds, selectedItems, clipboard]);
+
+  return {
+    mounted,
+    module,
+    state,
+    emptyDoc: () => emptyDoc(module),
+
+    tool,
+    setTool,
+
+    selectedIds,
+    setSelectedIds,
+    selected,
+    selectedItems,
+
+    panMode,
+
+    stageScale,
+    setStageScale,
+    stagePos,
+    setStagePos,
+
+    clipboard,
+
+    updateDoc,
+    updateItem,
+    updateMeta,
+    updateStyle,
+
+    setCursorWorld,
+    setViewportCenterWorld,
+    quickInsert,
+    addItemAtWorld,
+
+    addPlantToBed,
+    updatePlant,
+    removePlant,
+
+    setActiveGarden,
+    setActiveLayout,
+    newGarden,
+    renameGarden,
+    newLayout,
+    renameLayout,
+    publishLayout,
+
+    resetView,
+    copySelected,
+    pasteAtCursor,
+    deleteSelected,
+
+    bringForward,
+    sendBackward,
+    bringToFront,
+    sendToBack,
+  };
+}

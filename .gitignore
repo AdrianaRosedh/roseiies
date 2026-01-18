@@ -1,11 +1,16 @@
-cat > .gitignore <<'EOF'
 # dependencies
 node_modules
 **/node_modules
 
-# next build output
+# build output
 .next
 **/.next
+dist
+build
+
+# turbo cache
+.turbo
+**/.turbo
 
 # logs
 npm-debug.log*
@@ -17,6 +22,9 @@ pnpm-debug.log*
 .env*
 !.env.example
 
-# misc
+# OS
 .DS_Store
-EOF
+
+# editor
+.vscode
+.idea
