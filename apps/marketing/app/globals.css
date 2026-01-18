@@ -9,93 +9,107 @@ html {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* --- Roseiies animated gradient system --- */
+/* --- Roseiies palette --- */
+:root {
+  --r-red: #e23423;
+  --r-orange: #fc8606;
+  --r-ice: #edece8;
+  --r-blue: #10bbbf;
+  --r-black: #010506;
+}
+
+/* =========================================================
+   ROSEIIES COLOR FIELD (melted + moving like your reference)
+   ========================================================= */
+
 .roseiies-bg {
   position: fixed;
   inset: 0;
   z-index: -1;
   overflow: hidden;
-  background: #ffffff;
+  background: var(--r-ice);
 }
 
-.roseiies-blob {
+/* Big “melted” field that drifts */
+.roseiies-field {
   position: absolute;
-  width: 1200px;
-  height: 1200px;
-  border-radius: 9999px;
-  filter: blur(70px);
-  opacity: 0.55;
-  will-change: transform;
-  mix-blend-mode: multiply;
+  inset: -38%;
+
+  /* Fused gradients */
+  background:
+    /* blue base */
+    radial-gradient(1200px 900px at 14% 80%, rgba(16, 187, 191, 0.95), transparent 62%),
+
+    /* red warmth */
+    radial-gradient(1100px 900px at 42% 92%, rgba(226, 52, 35, 0.90), transparent 60%),
+
+    /* orange body */
+    radial-gradient(1200px 1000px at 64% 64%, rgba(252, 134, 6, 0.92), transparent 62%),
+
+    /* ✅ minimal black “edge” next to orange (shadow rim) */
+    radial-gradient(900px 700px at 72% 60%, rgba(1, 5, 6, 0.45), transparent 66%),
+
+    /* black depth on right */
+    radial-gradient(1400px 1100px at 88% 70%, rgba(1, 5, 6, 0.72), transparent 70%),
+
+    /* ice lift (keeps top clean / bright) */
+    radial-gradient(1200px 900px at 30% 38%, rgba(237, 236, 232, 0.98), transparent 60%);
+
+  /* Melt look */
+  filter: blur(150px) saturate(150%);
+  opacity: 0.98;
+
+  /* Visible motion */
+  animation: roseiies-field-drift 14s ease-in-out infinite;
+  will-change: transform, filter;
+  transform: translate3d(0, 0, 0);
 }
 
-/* Blue (bottom-left drift) */
-.roseiies-blob--blue {
-  background: radial-gradient(circle at 30% 30%, rgba(74,153,255,0.85), transparent 60%);
-  animation: roseiies-float-blue 18s ease-in-out infinite;
-}
-
-/* Peach (mid-right drift) */
-.roseiies-blob--peach {
-  background: radial-gradient(circle at 35% 35%, rgba(255,188,130,0.75), transparent 62%);
-  animation: roseiies-float-peach 22s ease-in-out infinite;
-  opacity: 0.45;
-}
-
-/* Pink (bottom-center drift) */
-.roseiies-blob--pink {
-  background: radial-gradient(circle at 40% 40%, rgba(255,92,122,0.65), transparent 62%);
-  animation: roseiies-float-pink 20s ease-in-out infinite;
-  opacity: 0.5;
-}
-
-/* Espresso (right-side drift) */
-.roseiies-blob--espresso {
-  background: radial-gradient(circle at 45% 45%, rgba(35,28,26,0.75), transparent 62%);
-  animation: roseiies-float-espresso 26s ease-in-out infinite;
-  opacity: 0.42;
-}
-
-/* Soft overall haze to keep whites creamy */
-.roseiies-haze {
+/* Light veil so text is readable but not washed out */
+.roseiies-veil {
   position: absolute;
   inset: 0;
-  background: linear-gradient(to bottom, rgba(255,255,255,0.98), rgba(255,255,255,0.92));
+  background: linear-gradient(
+    to bottom,
+    rgba(237, 236, 232, 0.72) 0%,
+    rgba(237, 236, 232, 0.26) 55%,
+    rgba(237, 236, 232, 0.12) 100%
+  );
   pointer-events: none;
 }
 
-/* Motion paths */
-@keyframes roseiies-float-blue {
-  0%   { transform: translate(-20%, 40%) scale(1.00); }
-  35%  { transform: translate(-10%, 55%) scale(1.10); }
-  70%  { transform: translate(  5%, 45%) scale(1.02); }
-  100% { transform: translate(-20%, 40%) scale(1.00); }
+/* Subtle grain */
+.roseiies-grain {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.06;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='.35'/%3E%3C/svg%3E");
 }
 
-@keyframes roseiies-float-peach {
-  0%   { transform: translate(55%, 15%) scale(1.05); }
-  40%  { transform: translate(62%, 28%) scale(1.12); }
-  75%  { transform: translate(48%, 22%) scale(1.02); }
-  100% { transform: translate(55%, 15%) scale(1.05); }
-}
-
-@keyframes roseiies-float-pink {
-  0%   { transform: translate(15%, 55%) scale(1.00); }
-  45%  { transform: translate(28%, 62%) scale(1.10); }
-  80%  { transform: translate(22%, 50%) scale(1.03); }
-  100% { transform: translate(15%, 55%) scale(1.00); }
-}
-
-@keyframes roseiies-float-espresso {
-  0%   { transform: translate(70%, 35%) scale(1.10); }
-  45%  { transform: translate(80%, 48%) scale(1.18); }
-  80%  { transform: translate(65%, 42%) scale(1.05); }
-  100% { transform: translate(70%, 35%) scale(1.10); }
+/* More obvious drift (screen travel + slight rotation) */
+@keyframes roseiies-field-drift {
+  0% {
+    transform: translate3d(-10vw, 8vh, 0) scale(1.12) rotate(-1.6deg);
+  }
+  32% {
+    transform: translate3d(8vw, -6vh, 0) scale(1.18) rotate(1.2deg);
+  }
+  66% {
+    transform: translate3d(12vw, 10vh, 0) scale(1.14) rotate(-0.8deg);
+  }
+  100% {
+    transform: translate3d(-10vw, 8vh, 0) scale(1.12) rotate(-1.6deg);
+  }
 }
 
 /* Respect reduced motion */
 @media (prefers-reduced-motion: reduce) {
-  .roseiies-blob {
-    animation: none !important;
-  }
+  .roseiies-field { animation: none !important; }
+}
+
+/* Force motion even if Reduce Motion is enabled (use for testing) */
+.force-motion .roseiies-field {
+  animation: roseiies-field-drift 14s ease-in-out infinite !important;
 }
