@@ -3,10 +3,11 @@
   "private": true,
   "packageManager": "pnpm@10.0.0",
   "scripts": {
-    "dev": "turbo dev",
-    "build": "turbo build",
-    "lint": "turbo lint",
-    "typecheck": "turbo typecheck"
+    "dev": "pnpm -C apps/tenant dev & pnpm -C apps/studio dev",
+    "dev:tenant": "pnpm -C apps/tenant dev",
+    "dev:studio": "pnpm -C apps/studio dev",
+    "build": "pnpm -C apps/tenant build && pnpm -C apps/studio build",
+    "lint": "pnpm -C apps/tenant lint && pnpm -C apps/studio lint"
   },
   "devDependencies": {
     "@types/node": "^20",
