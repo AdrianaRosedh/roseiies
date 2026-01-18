@@ -39,60 +39,54 @@ export default function TopBar(props: {
   } = props;
 
   return (
-    <header className="h-14 flex items-center justify-between border-b border-black/10 bg-white/70 backdrop-blur px-4">
-      <div className="flex items-center gap-3">
-        <div className="text-sm font-semibold tracking-tight">Roseiies Studio</div>
+    <header className="h-14 flex items-center justify-between border border-black/10 bg-white/55 backdrop-blur px-3 rounded-xl shadow-sm">
+      <div className="flex items-center gap-2">
+        <select
+          value={state.activeGardenId ?? ""}
+          onChange={(e) => props.onSetGarden(e.target.value)}
+          className="rounded-lg border border-black/10 bg-white px-3 py-2 text-xs shadow-sm"
+        >
+          {state.gardens.map((g) => (
+            <option key={g.id} value={g.id}>
+              {g.name}
+            </option>
+          ))}
+        </select>
+
+        <button className={btn("ghost")} onClick={props.onRenameGarden} disabled={!activeGarden}>
+          Rename
+        </button>
+
+        <button className={btn("ghost")} onClick={props.onNewGarden}>
+          + Garden
+        </button>
 
         <span className="mx-2 h-5 w-px bg-black/10" />
 
-        <div className="flex items-center gap-2">
-          <select
-            value={state.activeGardenId ?? ""}
-            onChange={(e) => props.onSetGarden(e.target.value)}
-            className="rounded-lg border border-black/10 bg-white px-3 py-2 text-xs shadow-sm"
-          >
-            {state.gardens.map((g) => (
-              <option key={g.id} value={g.id}>
-                {g.name}
-              </option>
-            ))}
-          </select>
+        <select
+          value={state.activeLayoutId ?? ""}
+          onChange={(e) => props.onSetLayout(e.target.value)}
+          className="rounded-lg border border-black/10 bg-white px-3 py-2 text-xs shadow-sm"
+        >
+          {layoutsForGarden.map((l) => (
+            <option key={l.id} value={l.id}>
+              {l.published ? "● " : ""}
+              {l.name}
+            </option>
+          ))}
+        </select>
 
-          <button className={btn("ghost")} onClick={props.onRenameGarden} disabled={!activeGarden}>
-            Rename
-          </button>
+        <button className={btn("ghost")} onClick={props.onRenameLayout} disabled={!activeLayout}>
+          Rename
+        </button>
 
-          <button className={btn("ghost")} onClick={props.onNewGarden}>
-            + Garden
-          </button>
-        </div>
+        <button className={btn("ghost")} onClick={props.onNewLayout} disabled={!state.activeGardenId}>
+          + Layout
+        </button>
 
-        <div className="ml-3 flex items-center gap-2">
-          <select
-            value={state.activeLayoutId ?? ""}
-            onChange={(e) => props.onSetLayout(e.target.value)}
-            className="rounded-lg border border-black/10 bg-white px-3 py-2 text-xs shadow-sm"
-          >
-            {layoutsForGarden.map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.published ? "● " : ""}
-                {l.name}
-              </option>
-            ))}
-          </select>
-
-          <button className={btn("ghost")} onClick={props.onRenameLayout} disabled={!activeLayout}>
-            Rename
-          </button>
-
-          <button className={btn("ghost")} onClick={props.onNewLayout} disabled={!state.activeGardenId}>
-            + Layout
-          </button>
-
-          <button className={btn("primary")} onClick={props.onPublish} disabled={!activeLayout}>
-            Publish
-          </button>
-        </div>
+        <button className={btn("primary")} onClick={props.onPublish} disabled={!activeLayout}>
+          Publish
+        </button>
       </div>
 
       <div className="flex items-center gap-2">

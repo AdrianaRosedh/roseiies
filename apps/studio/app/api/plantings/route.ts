@@ -25,7 +25,7 @@ export async function GET(req: Request) {
 
   const { data, error } = await supabase
     .from("garden_plantings")
-    .select("id, bed_id, crop, status, planted_at, pin_x, pin_y")
+    .select("id, bed_id, crop, status, planted_at, pin_x, pin_y, created_at")
     .eq("tenant_id", tenantId)
     .eq("garden_id", garden.id)
     .order("created_at", { ascending: false });
@@ -51,6 +51,32 @@ export async function POST(req: Request) {
       pin_x: pin_x ?? null,
       pin_y: pin_y ?? null,
     })
+    .select()
+    .single();
+
+  if (error) return Response.json({ error: error.message }, { status: 400 });
+  return Response.json(data);
+}
+
+export async function PATCH(req: Request) {
+  const supabase = createServerSupabase();
+  const url = new URL(req.url);
+  const id = url.searchParams.get("id");
+
+  if (!id) return Response.json({ error: "Missing id" }, { status: 400 });
+
+  const body = await req.json();
+
+  const allowed = ["crop", "status", "planted_at", "bed_id", "pin_x", "pin_y"] as const;
+  const patch: Record<string, any> = {};
+  for (const k of allowed) {
+    if (k in body) patch[k] = body[k];
+  }
+
+  const { data, error } = await supabase
+    .from("garden_plantings")
+    .update(patch)
+    .eq("id", id)
     .select()
     .single();
 

@@ -20,11 +20,16 @@ export default async function GardenPublicPage() {
 
       <div className="mt-10">
         {!data ? (
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-sm opacity-80">
+          <div className="rounded-2xl border border-(--rose-border) bg-(--rose-surface) backdrop-blur shadow-sm p-6 text-sm text-(--rose-muted)">
             No published layout found yet.
           </div>
         ) : (
-          <GardenViewer canvas={data.layout.canvas} items={data.items} plantings={plantings} role="guest" />
+          <GardenViewer
+            canvas={data.layout.canvas}
+            items={data.items}
+            plantings={plantings}
+            role="guest"
+          />
         )}
       </div>
     </main>

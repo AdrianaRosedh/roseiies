@@ -1,9 +1,7 @@
 import StudioApp from "./studio/StudioApp";
+import { getPortalContext } from "./lib/portal/getPortalContext";
 
-export default function Page() {
-  return (
-    <main className="min-h-screen">
-      <StudioApp />
-    </main>
-  );
+export default async function Page() {
+  const portal = await getPortalContext();
+  return <StudioApp portal={portal} />;
 }

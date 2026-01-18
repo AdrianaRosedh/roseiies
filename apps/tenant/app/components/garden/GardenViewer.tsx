@@ -21,7 +21,7 @@ type Item = {
 type Role = "guest" | "gardener" | "kitchen";
 
 function rgba(hex: string, opacity: number) {
-  const h = String(hex ?? "#0b1220").replace("#", "").trim();
+  const h = String(hex ?? "#010506").replace("#", "").trim();
   const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
   const r = parseInt(full.slice(0, 2), 16);
   const g = parseInt(full.slice(2, 4), 16);
@@ -91,29 +91,35 @@ export default function GardenViewer({
     return null;
   }, [plantings, plantingsByBed, selectedBedId, selectedPlantingId]);
 
+  // Roseiies accents
+  const ROSE_BLUE = "#10bbbf";
+
   return (
     <div className="grid gap-4 md:grid-cols-[1fr_340px]">
-      <div className="w-full overflow-hidden rounded-2xl border border-white/10 bg-white/5">
+      {/* Canvas panel */}
+      <div className="w-full overflow-hidden rounded-2xl border border-(--rose-border) bg-(--rose-surface) backdrop-blur shadow-sm">
         <Stage width={900} height={560}>
           <Layer>
-            <Rect x={0} y={0} width={900} height={560} fill="rgba(0,0,0,0.20)" />
+            {/* Light stage background (NOT dark) */}
+            <Rect x={0} y={0} width={900} height={560} fill="rgba(255,255,255,0.22)" />
 
             <Group x={24} y={24}>
+              {/* Canvas boundary */}
               <Rect
                 x={0}
                 y={0}
                 width={canvas.width}
                 height={canvas.height}
-                fill="rgba(255,255,255,0.06)"
-                stroke="rgba(255,255,255,0.10)"
+                fill="rgba(255,255,255,0.16)"
+                stroke="rgba(1,5,6,0.10)"
                 strokeWidth={2}
                 cornerRadius={18}
               />
 
               {items.map((it) => {
                 const s = it.style ?? {};
-                const fill = rgba(s.fill ?? "#e9e2d6", s.fillOpacity ?? 0.8);
-                const stroke = rgba(s.stroke ?? "#f3f0e8", s.strokeOpacity ?? 0.18);
+                const fill = rgba(s.fill ?? "#e9e2d6", s.fillOpacity ?? 0.86);
+                const stroke = rgba(s.stroke ?? "#010506", s.strokeOpacity ?? 0.10);
                 const radius = s.radius ?? 16;
                 const strokeWidth = s.strokeWidth ?? 1.2;
 
@@ -136,7 +142,7 @@ export default function GardenViewer({
                       width={it.w}
                       height={it.h}
                       fill={fill}
-                      stroke={isSelected ? "rgba(94,118,88,0.9)" : stroke}
+                      stroke={isSelected ? ROSE_BLUE : stroke}
                       strokeWidth={isSelected ? 2.4 : strokeWidth}
                       cornerRadius={radius}
                     />
@@ -146,11 +152,11 @@ export default function GardenViewer({
                       y={10}
                       text={it.label}
                       fontSize={14}
-                      fill="rgba(243,240,232,0.85)"
+                      fill="rgba(1,5,6,0.62)"
                       listening={false}
                     />
 
-                    {/* Pins for this bed (relative → absolute in bed space) */}
+                    {/* Pins for this bed */}
                     {isBed &&
                       (plantingsByBed.get(it.id) ?? [])
                         .filter((p) => p.pin_x != null && p.pin_y != null)
@@ -160,8 +166,8 @@ export default function GardenViewer({
                             x={(p.pin_x as number) * it.w}
                             y={(p.pin_y as number) * it.h}
                             radius={6}
-                            fill="rgba(94,118,88,0.95)"
-                            stroke="rgba(0,0,0,0.25)"
+                            fill={ROSE_BLUE}
+                            stroke="rgba(1,5,6,0.18)"
                             strokeWidth={1}
                             onClick={(e) => {
                               e.cancelBubble = true;
@@ -178,30 +184,37 @@ export default function GardenViewer({
         </Stage>
       </div>
 
-      <aside className="rounded-2xl border border-white/10 bg-white/5 p-5">
+      {/* Info panel */}
+      <aside className="rounded-2xl border border-(--rose-border) bg-(--rose-surface) backdrop-blur shadow-sm p-5">
         {!selectedBed ? (
-          <div className="text-sm opacity-75">
+          <div className="text-sm text-(--rose-muted)">
             Click a bed (or a pin) to see what’s growing.
           </div>
         ) : (
           <>
-            <div className="text-xs opacity-60">Bed</div>
-            <div className="mt-1 text-lg font-semibold">{selectedBed.label}</div>
+            <div className="text-xs text-(--rose-muted)">Bed</div>
+            <div className="mt-1 text-lg font-semibold text-(--rose-ink)">
+              {selectedBed.label}
+            </div>
 
-            <div className="mt-4 border-t border-white/10 pt-4">
+            <div className="mt-4 border-t border-(--rose-border) pt-4">
               {!selectedPlanting ? (
-                <div className="text-sm opacity-75">No plantings for this bed yet.</div>
+                <div className="text-sm text-(--rose-muted)">
+                  No plantings for this bed yet.
+                </div>
               ) : (
                 (() => {
                   const card = roleCard(selectedPlanting, role);
                   return (
                     <div className="space-y-2">
-                      <div className="text-xs opacity-60">{card.subtitle}</div>
-                      <div className="text-xl font-semibold">{card.title}</div>
+                      <div className="text-xs text-(--rose-muted)">{card.subtitle}</div>
+                      <div className="text-xl font-semibold text-(--rose-ink)">{card.title}</div>
                       {card.body ? (
-                        <p className="text-sm leading-relaxed opacity-85">{card.body}</p>
+                        <p className="text-sm leading-relaxed text-(--rose-ink) opacity-80">
+                          {card.body}
+                        </p>
                       ) : (
-                        <p className="text-sm opacity-70">
+                        <p className="text-sm text-(--rose-muted)">
                           (No notes yet for this role.)
                         </p>
                       )}
@@ -211,7 +224,7 @@ export default function GardenViewer({
               )}
             </div>
 
-            <div className="mt-5 text-xs opacity-60">
+            <div className="mt-5 text-xs text-(--rose-muted)">
               Plantings in this bed: {(plantingsByBed.get(selectedBed.id) ?? []).length}
             </div>
           </>

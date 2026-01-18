@@ -2,6 +2,9 @@
   "name": "@roseiies/core",
   "version": "0.0.1",
   "private": true,
-  "main": "index.ts",
-  "types": "index.ts"
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./styles/roseiies.css": "./styles/roseiies.css"
+  }
 }

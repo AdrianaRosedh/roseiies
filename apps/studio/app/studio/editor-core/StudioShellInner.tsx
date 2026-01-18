@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import type { StudioModule } from "./types";
+import type { PortalContext } from "../../lib/portal/getPortalContext";
 import TopBar from "./TopBar";
 import LeftToolbar from "./LeftToolbar";
 import Inspector from "./Inspector";
@@ -10,9 +11,11 @@ import CanvasStage from "./CanvasStage";
 export default function StudioShellInner({
   module,
   store,
+  portal,
 }: {
   module: StudioModule;
-  store: any; // (keep any for now; we can type it cleanly after)
+  store: any;
+  portal: PortalContext;
 }) {
   const activeGarden = useMemo(
     () => store.state.gardens.find((g: any) => g.id === store.state.activeGardenId) ?? null,
@@ -47,6 +50,8 @@ export default function StudioShellInner({
         activeLayout={activeLayout}
         stageScale={store.stageScale}
         panMode={store.panMode}
+        tenantName={portal.tenantName}
+        userLabel={portal.userLabel}
         onSetGarden={store.setActiveGarden}
         onSetLayout={store.setActiveLayout}
         onNewGarden={store.newGarden}
