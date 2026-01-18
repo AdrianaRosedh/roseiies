@@ -8,7 +8,7 @@ const supabase = createClient(
 export async function loadPublishedGardenLayout(tenantId: string) {
   const { data: layout, error: layoutErr } = await supabase
     .from("garden_layouts")
-    .select("id, name, canvas")
+    .select("id, garden_id, name, canvas")
     .eq("tenant_id", tenantId)
     .eq("status", "published")
     .single();

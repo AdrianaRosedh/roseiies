@@ -41,11 +41,13 @@ export async function POST(req: Request) {
   const layoutName = body.layoutName.trim();
 
   // 1) Find or create garden
+  // ✅ Fix: limit(1) prevents "multiple rows" -> maybeSingle crash
   const { data: existingGarden, error: gardenSelectErr } = await supabase
     .from("gardens")
     .select("id")
     .eq("tenant_id", tenantId)
     .eq("name", gardenName)
+    .limit(1)
     .maybeSingle();
 
   if (gardenSelectErr) {
@@ -83,12 +85,14 @@ export async function POST(req: Request) {
   }
 
   // 3) Find existing layout by (tenant_id, garden_id, name)
+  // ✅ Fix: limit(1) prevents "multiple rows" -> maybeSingle crash
   const { data: existingLayout, error: layoutSelectErr } = await supabase
     .from("garden_layouts")
     .select("id, version")
     .eq("tenant_id", tenantId)
     .eq("garden_id", gardenId)
     .eq("name", layoutName)
+    .limit(1)
     .maybeSingle();
 
   if (layoutSelectErr) {

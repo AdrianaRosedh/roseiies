@@ -7,7 +7,7 @@ const nextConfig: NextConfig = {
     "127.0.0.1",
     "192.168.1.79",
   ],
-
+  transpilePackages: ["@roseiies/supabase", "@roseiies/core"],
   turbopack: {},
 };
 

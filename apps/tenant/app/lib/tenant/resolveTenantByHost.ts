@@ -1,19 +1,24 @@
-import { supabasePublic } from "@roseiies/supabase/client";
+import { supabasePublic } from "@roseiies/supabase";
 
 export type ResolvedTenant = {
   tenantId: string;
   defaultLang: string;
 };
 
-const CACHE = new Map<string, { value: ResolvedTenant; at: number }>();
+const CACHE = new Map<string, { v: ResolvedTenant; t: number }>();
 const TTL_MS = 60_000;
 
 export async function resolveTenantByHost(hostHeader: string): Promise<ResolvedTenant | null> {
-  const hostname = (hostHeader || "").toLowerCase().split(":")[0];
+  const hostname = (hostHeader ?? "").toLowerCase().split(":")[0];
   const now = Date.now();
 
-  // ✅ Dev convenience: env-driven override (not tenant hardcoding)
-  if ((hostname === "localhost" || hostname.endsWith(".local")) && process.env.NEXT_PUBLIC_DEV_TENANT_ID) {
+  // ✅ Treat any local dev host as "dev"
+  const isDevHost =
+    hostname === "localhost" ||
+    hostname.endsWith(".local") ||
+    hostname.includes("localhost"); // allows olivea-localhost
+
+  if (isDevHost && process.env.NEXT_PUBLIC_DEV_TENANT_ID) {
     return {
       tenantId: process.env.NEXT_PUBLIC_DEV_TENANT_ID,
       defaultLang: process.env.NEXT_PUBLIC_DEV_TENANT_LANG ?? "es",
@@ -21,7 +26,7 @@ export async function resolveTenantByHost(hostHeader: string): Promise<ResolvedT
   }
 
   const hit = CACHE.get(hostname);
-  if (hit && now - hit.at < TTL_MS) return hit.value;
+  if (hit && now - hit.t < TTL_MS) return hit.v;
 
   const supabase = supabasePublic();
 
@@ -38,6 +43,6 @@ export async function resolveTenantByHost(hostHeader: string): Promise<ResolvedT
     defaultLang: (data.tenants as any)?.default_lang ?? "es",
   };
 
-  CACHE.set(hostname, { value: resolved, at: now });
+  CACHE.set(hostname, { v: resolved, t: now });
   return resolved;
 }

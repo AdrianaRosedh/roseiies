@@ -1,6 +1,7 @@
 export { getTenantContext } from "./getTenantContext";
-export { resolveTenantByHost } from "./resolveTenantByHost";
+export type { TenantContext } from "./getTenantContext";
 
-// If resolve.ts exports other helpers, export them explicitly by name.
-// Example:
-// export { resolveSomethingElse } from "./resolve";
+export { resolveTenantByHost } from "./resolveTenantByHost";
+export type { ResolvedTenant } from "./resolveTenantByHost";
+
+export { getRequestTheme } from "./getRequestTheme";
