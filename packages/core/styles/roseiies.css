@@ -1,0 +1,66 @@
+/* packages/core/styles/roseiies.css */
+
+:root {
+  --rose-bg: #edece8;
+  --rose-ink: #010506;
+
+  --rose-blue: #10bbbf;
+  --rose-orange: #fc8606;
+  --rose-red: #e23423;
+
+  --rose-surface: rgba(255, 255, 255, 0.62);
+  --rose-surface-strong: rgba(255, 255, 255, 0.86);
+  --rose-border: rgba(1, 5, 6, 0.10);
+  --rose-muted: rgba(1, 5, 6, 0.55);
+
+  --rose-focus: rgba(16, 187, 191, 0.35);
+  --rose-hover: rgba(1, 5, 6, 0.05);
+
+  --rose-danger-bg: rgba(226, 52, 35, 0.12);
+  --rose-danger-text: #b5281d;
+}
+
+/* Generic, reusable utilities */
+.rose-surface {
+  background: var(--rose-surface);
+  border: 1px solid var(--rose-border);
+  backdrop-filter: blur(12px);
+}
+
+.rose-surface-strong {
+  background: var(--rose-surface-strong);
+  border: 1px solid var(--rose-border);
+  backdrop-filter: blur(12px);
+}
+
+.rose-pill {
+  background: rgba(255,255,255,0.7);
+  border: 1px solid var(--rose-border);
+  border-radius: 9999px;
+}
+
+.rose-btn {
+  border: 1px solid var(--rose-border);
+  border-radius: 12px;
+  background: rgba(255,255,255,0.6);
+  backdrop-filter: blur(12px);
+}
+
+.rose-btn:hover {
+  background: rgba(255,255,255,0.8);
+}
+
+.rose-btn-primary {
+  background: var(--rose-ink);
+  color: white;
+  border: 1px solid transparent;
+}
+
+.rose-btn-primary:hover {
+  opacity: 0.95;
+}
+
+.rose-focus:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--rose-focus);
+}
