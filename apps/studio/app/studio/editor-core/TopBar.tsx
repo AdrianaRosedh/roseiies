@@ -20,6 +20,9 @@ export default function TopBar(props: {
   stageScale: number;
   panMode: boolean;
 
+  // ✅ NEW: back to workplace
+  onBack?: () => void;
+
   onSetGarden: (id: string) => void;
   onSetLayout: (id: string) => void;
 
@@ -85,7 +88,9 @@ export default function TopBar(props: {
       if (maybe && typeof (maybe as any).then === "function") {
         const res = (await maybe) as PublishResult;
         if (res.ok) {
-          setStatus(`Published${res.itemsWritten != null ? ` · ${res.itemsWritten} items` : ""}`);
+          setStatus(
+            `Published${res.itemsWritten != null ? ` · ${res.itemsWritten} items` : ""}`
+          );
         } else {
           setStatus(`Publish failed · ${res.error}`);
         }
@@ -103,6 +108,18 @@ export default function TopBar(props: {
       <header className="h-14 flex items-center justify-between gap-3 border border-black/10 bg-white/60 backdrop-blur px-3 rounded-xl shadow-sm">
         {/* LEFT: garden + layout */}
         <div className="flex items-center gap-2 min-w-0">
+          {/* ✅ Workplace button moved here */}
+          {props.onBack ? (
+            <button
+              onClick={props.onBack}
+              className="rounded-lg border border-black/10 bg-white px-3 py-2 text-xs text-black/80 shadow-sm hover:bg-black/5"
+              title="Back to Workplace"
+              aria-label="Back to Workplace"
+            >
+              ←
+            </button>
+          ) : null}
+
           <select
             value={state.activeGardenId ?? ""}
             onChange={(e) => props.onSetGarden(e.target.value)}
@@ -217,7 +234,10 @@ export default function TopBar(props: {
         />
 
         <div className="mt-4 flex justify-end gap-2">
-          <button className="rounded-xl border border-black/10 bg-white/70 px-4 py-2 text-sm" onClick={close}>
+          <button
+            className="rounded-xl border border-black/10 bg-white/70 px-4 py-2 text-sm"
+            onClick={close}
+          >
             Cancel
           </button>
           <button

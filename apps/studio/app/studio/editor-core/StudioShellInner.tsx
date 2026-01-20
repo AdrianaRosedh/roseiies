@@ -12,10 +12,12 @@ export default function StudioShellInner({
   module,
   store,
   portal,
+  onBack,
 }: {
   module: StudioModule;
   store: any;
   portal: PortalContext;
+  onBack?: () => void;
 }) {
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
@@ -49,8 +51,6 @@ export default function StudioShellInner({
 
   const LEFT_OPEN_W = 280;
   const RIGHT_OPEN_W = 380;
-
-  // ✅ thinner rails
   const RAIL_W = 22;
 
   const leftW = leftOpen ? LEFT_OPEN_W : RAIL_W;
@@ -66,6 +66,7 @@ export default function StudioShellInner({
         activeLayout={activeLayout}
         stageScale={store.stageScale}
         panMode={store.panMode}
+        onBack={onBack}
         onSetGarden={store.setActiveGarden}
         onSetLayout={store.setActiveLayout}
         onNewGarden={store.newGarden}
@@ -180,7 +181,7 @@ export default function StudioShellInner({
         </div>
       </div>
 
-      {/* Mobile: keep your drawer approach (unchanged) */}
+      {/* Mobile */}
       <div className="md:hidden mt-3 rounded-2xl border border-black/10 bg-white/40 shadow-sm overflow-hidden h-[calc(100vh-56px-56px-28px)] relative">
         <CanvasStage
           module={module}
@@ -232,13 +233,6 @@ function PanelHeader({
   );
 }
 
-/**
- * ✅ Collapsed rail:
- * - very thin
- * - NO circle/background around icon
- * - keeps vertical title
- * - click anywhere in rail to expand
- */
 function CollapsedRail({
   side,
   title,
@@ -258,12 +252,10 @@ function CollapsedRail({
       aria-label={`Show ${title}`}
       type="button"
     >
-      {/* icon only (no pill) */}
       <span className="opacity-70 hover:opacity-95 transition-opacity">
         <Icon />
       </span>
 
-      {/* vertical title */}
       <span
         className="text-[10px] text-black/35 tracking-wide select-none"
         style={{
