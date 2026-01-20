@@ -1,3 +1,5 @@
+// apps/studio/app/studio/editor-core/types.ts
+
 export type ItemType = "bed" | "zone" | "path" | "structure" | "label";
 
 export type Swatch = { name: string; value: string };
@@ -20,11 +22,19 @@ export type ItemStyle = {
   shadow?: ShadowStyle;
 };
 
+export type PlantPin = {
+  id: string;
+  x: number; // 0..1 (relative to bed width)
+  y: number; // 0..1 (relative to bed height)
+  label?: string;
+};
+
 export type PlantBlock = {
   id: string;
   name: string;
   color: string;
   note?: string;
+  pins?: PlantPin[];
 };
 
 export type StudioItem = {
@@ -41,7 +51,12 @@ export type StudioItem = {
   meta: {
     status?: "abundant" | "fragile" | "dormant";
     public?: boolean;
-    plants?: PlantBlock[]; // ✅ multiple crops per bed
+
+    // Beds can show a “design intent” list, but operational truth comes later from plantings.
+    plants?: PlantBlock[];
+
+    // ✅ NEW: zones are nested “inside a bed” via parentBedId
+    parentBedId?: string; // only for item.type === "zone"
   };
 
   style: ItemStyle;

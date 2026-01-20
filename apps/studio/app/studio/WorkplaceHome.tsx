@@ -1,6 +1,6 @@
 "use client";
 
-type AppTile = {
+export type AppTile = {
   id: string;
   name: string;
   description: string;
@@ -12,8 +12,15 @@ export default function WorkplaceHome({
   onOpen,
 }: {
   apps: AppTile[];
-  onOpen: (id: string) => void;
+  onOpen?: (id: string) => void; // ✅ optional = no hard crash during stale HMR
 }) {
+  const safeOpen =
+    typeof onOpen === "function"
+      ? onOpen
+      : (id: string) => {
+          console.warn("[WorkplaceHome] onOpen missing/not a function:", id);
+        };
+
   return (
     <div className="w-full">
       <h1 className="text-2xl font-semibold tracking-tight">Workplace</h1>
@@ -25,7 +32,11 @@ export default function WorkplaceHome({
         {apps.map((app) => (
           <button
             key={app.id}
-            onClick={() => onOpen(app.id)}
+            type="button"
+            onClick={() => {
+              console.log("[WorkplaceHome] click:", app.id);
+              safeOpen(app.id);
+            }}
             className="group rounded-2xl border border-black/10 bg-white/55 p-5 text-left shadow-sm backdrop-blur transition hover:bg-white/75 hover:shadow-md"
           >
             <div className="flex items-start justify-between gap-4">

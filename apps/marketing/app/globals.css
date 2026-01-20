@@ -5,6 +5,25 @@
 @source "./**/*.{ts,tsx}";
 @source "../**/*.{ts,tsx}";
 
+/* =========================================================
+   Roseiies Marketing BG — “elegant field” (muted + premium)
+   Inspired by your attached refs: champagne paper + soft coral + dusty teal
+   ========================================================= */
+
+:root {
+  /* Base paper (hero readability) */
+  --rm-paper: rgba(238, 237, 232, 1);
+
+  /* Accents (muted, luxe) */
+  --rm-ink: rgba(6, 8, 10, 1);
+  --rm-espresso: rgba(16, 10, 10, 1);
+  --rm-coral: rgba(214, 86, 72, 1);      /* muted terracotta */
+  --rm-amber: rgba(222, 162, 92, 1);     /* warm champagne/amber */
+  --rm-teal: rgba(66, 150, 148, 1);      /* dusty teal */
+  --rm-lilac: rgba(156, 150, 186, 1);    /* soft lilac haze */
+  --rm-ice: rgba(214, 223, 232, 1);      /* cool lift */
+}
+
 /* ===== Marketing background: expressive Roseiies field ===== */
 
 .roseiies-marketing-bg {
@@ -12,57 +31,191 @@
   inset: 0;
   z-index: -1;
   overflow: hidden;
-  background: var(--rose-bg);
+  background: var(--rm-paper);
 }
 
-.roseiies-marketing-field {
+/* Big “melted” field — refined to feel calmer + more expensive */
+.roseiies-field {
   position: absolute;
-  inset: -40%;
+  inset: -44%;
 
   background:
-    radial-gradient(1200px 900px at 20% 80%, rgba(16,187,191,0.90), transparent 60%),
-    radial-gradient(1100px 900px at 45% 90%, rgba(226,52,35,0.85), transparent 60%),
-    radial-gradient(1200px 1000px at 65% 65%, rgba(252,134,6,0.90), transparent 62%),
-    radial-gradient(1400px 1100px at 85% 70%, rgba(1,5,6,0.70), transparent 72%);
+    /* deep corner weight (so the field has structure) */
+    radial-gradient(1200px 980px at 18% 14%, rgba(16, 10, 10, 0.64), transparent 62%),
 
-  filter: blur(140px) saturate(140%);
-  opacity: 0.95;
+    /* main terracotta body (less neon, more clay) */
+    radial-gradient(1500px 1300px at 52% 46%, rgba(214, 86, 72, 0.58), transparent 68%),
 
-  animation: marketing-field-drift 18s ease-in-out infinite;
-  will-change: transform;
-  transform: translate3d(0,0,0);
+    /* warm amber glow (bottom-left) */
+    radial-gradient(1300px 980px at 16% 82%, rgba(222, 162, 92, 0.54), transparent 62%),
+
+    /* dusty teal (bottom-right) */
+    radial-gradient(1300px 1100px at 86% 78%, rgba(66, 150, 148, 0.52), transparent 64%),
+
+    /* lilac haze (top-right) */
+    radial-gradient(1200px 980px at 88% 16%, rgba(156, 150, 186, 0.28), transparent 64%),
+
+    /* sculpting shadow (keeps center from feeling flat) */
+    radial-gradient(1100px 980px at 62% 52%, rgba(6, 8, 10, 0.24), transparent 70%),
+
+    /* cool lift (left-mid) — matches your “white bloom” reference */
+    radial-gradient(1400px 1200px at 22% 48%, rgba(214, 223, 232, 0.58), transparent 66%);
+
+  /* More “silk”, less “neon lava” */
+  filter: blur(190px) saturate(118%) contrast(102%);
+  opacity: 0.98;
+
+  animation: marketing-field-drift 16s ease-in-out infinite;
+
+  will-change: transform, filter;
+  transform: translate3d(0, 0, 0);
 }
 
 @keyframes marketing-field-drift {
-  0%   { transform: translate3d(-8vw, 6vh, 0) scale(1.12) rotate(-1.4deg); }
-  35%  { transform: translate3d( 6vw,-4vh, 0) scale(1.18) rotate( 1.0deg); }
-  70%  { transform: translate3d(10vw, 8vh, 0) scale(1.14) rotate(-0.6deg); }
-  100% { transform: translate3d(-8vw, 6vh, 0) scale(1.12) rotate(-1.4deg); }
+  0%   { transform: translate3d(-7vw, 6vh, 0) scale(1.10) rotate(-1.1deg); }
+  35%  { transform: translate3d( 5vw,-4vh, 0) scale(1.16) rotate( 0.9deg); }
+  70%  { transform: translate3d( 9vw, 7vh, 0) scale(1.12) rotate(-0.5deg); }
+  100% { transform: translate3d(-7vw, 6vh, 0) scale(1.10) rotate(-1.1deg); }
 }
 
-/* Keeps hero readable */
+/* Keeps hero readable (premium haze, closer to your first reference) */
 .roseiies-marketing-veil {
   position: absolute;
   inset: 0;
-  background: linear-gradient(
-    to bottom,
-    rgba(237,236,232,0.88) 0%,
-    rgba(237,236,232,0.60) 55%,
-    rgba(237,236,232,0.45) 100%
-  );
+  background:
+    /* central soft bloom (like a lit paper stage) */
+    radial-gradient(980px 560px at 50% 38%, rgba(255,255,255,0.26), transparent 72%),
+
+    /* paper wash: lighter at top, gently falls off */
+    linear-gradient(
+      to bottom,
+      rgba(238,237,232,0.90) 0%,
+      rgba(238,237,232,0.62) 56%,
+      rgba(238,237,232,0.46) 100%
+    );
   pointer-events: none;
 }
 
-/* Subtle grain */
+/* Extra spotlight to make the hero feel “lit” (subtler + silkier) */
+.roseiies-spotlight {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(560px 340px at 50% 42%, rgba(255,255,255,0.18), transparent 74%),
+    radial-gradient(900px 520px at 50% 30%, rgba(255,255,255,0.10), transparent 72%);
+  mix-blend-mode: soft-light;
+  opacity: 0.72;
+}
+
+/* Subtle grain (less “dirty”, more film) */
 .roseiies-marketing-grain {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  opacity: 0.06;
+  opacity: 0.045;
   mix-blend-mode: multiply;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='.35'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.7' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='.33'/%3E%3C/svg%3E");
 }
 
+/* ===== Hero eye-candy (no JS) ===== */
+
+.roseiies-hero {
+  position: relative;
+  width: 100%;
+  max-width: 860px;
+}
+
+.roseiies-halo {
+  position: absolute;
+  width: min(720px, 92vw);
+  height: min(420px, 62vw);
+  left: 50%;
+  top: 42%;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+
+  /* Halo tuned to your refs: paper highlight + faint teal + faint terracotta */
+  background:
+    radial-gradient(circle at 40% 40%, rgba(255,255,255,0.30), transparent 62%),
+    radial-gradient(circle at 72% 62%, rgba(66,150,148,0.12), transparent 64%),
+    radial-gradient(circle at 56% 56%, rgba(214,86,72,0.10), transparent 66%);
+
+  filter: blur(28px);
+  opacity: 0.92;
+  animation: marketing-halo-breathe 9s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes marketing-halo-breathe {
+  0%   { transform: translate(-50%, -50%) scale(0.985); opacity: 0.82; }
+  50%  { transform: translate(-50%, -50%) scale(1.03);  opacity: 0.96; }
+  100% { transform: translate(-50%, -50%) scale(0.985); opacity: 0.82; }
+}
+
+.roseiies-hero-logo {
+  /* slightly cleaner shadow (less heavy) */
+  filter: drop-shadow(0 16px 44px rgba(0, 0, 0, 0.16));
+  opacity: 0.94;
+  animation: marketing-logo-float 6.8s ease-in-out infinite;
+  transform-origin: 50% 60%;
+}
+
+@keyframes marketing-logo-float {
+  0%   { transform: translateY(0px) scale(1); }
+  50%  { transform: translateY(-6px) scale(1.01); }
+  100% { transform: translateY(0px) scale(1); }
+}
+
+/* Primary CTA gets a moving “glint” (slightly softer) */
+.roseiies-cta-primary {
+  position: relative;
+  overflow: hidden;
+}
+
+.roseiies-cta-primary::after {
+  content: "";
+  position: absolute;
+  inset: -30% -40%;
+  background: linear-gradient(
+    115deg,
+    transparent 36%,
+    rgba(255,255,255,0.22) 46%,
+    rgba(255,255,255,0.07) 54%,
+    transparent 66%
+  );
+  transform: translateX(-60%);
+  animation: marketing-cta-glint 3.8s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes marketing-cta-glint {
+  0%   { transform: translateX(-65%); opacity: 0; }
+  18%  { opacity: 1; }
+  45%  { transform: translateX(45%); opacity: 0.8; }
+  60%  { opacity: 0; }
+  100% { transform: translateX(65%); opacity: 0; }
+}
+
+/* Cards feel “premium” on hover */
+.roseiies-card {
+  transition: transform 240ms ease, box-shadow 240ms ease, border-color 240ms ease;
+  border: 1px solid rgba(0,0,0,0.04);
+  backdrop-filter: blur(10px);
+}
+
+.roseiies-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 18px 60px rgba(0,0,0,0.10);
+  border-color: rgba(0,0,0,0.07);
+}
+
+/* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
-  .roseiies-marketing-field { animation: none !important; }
+  .roseiies-field,
+  .roseiies-halo,
+  .roseiies-hero-logo,
+  .roseiies-cta-primary::after {
+    animation: none !important;
+  }
 }

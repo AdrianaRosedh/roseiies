@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { createServerSupabase } from "@roseiies/supabase/server";
+import { resolveTenantFromReq, requireStudioToken } from "@/app/lib/server/tenant-auth";
 
 type LayoutDoc = {
   version: 1;
@@ -20,28 +21,35 @@ type LayoutDoc = {
 };
 
 export async function POST(req: Request) {
+  const supabase = createServerSupabase();
+  const { tenantId, host, mode } = await resolveTenantFromReq(req);
+
+  if (!tenantId) {
+    return NextResponse.json(
+      { error: "Unknown tenant (host not mapped)", host, mode },
+      { status: 404 }
+    );
+  }
+
+  const gate = requireStudioToken(req);
+  if (!gate.ok) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const body = (await req.json()) as {
-    tenantId: string;
     gardenName: string;
     layoutName: string;
     doc: LayoutDoc;
   };
 
-  if (!body?.tenantId || !body?.gardenName || !body?.layoutName || !body?.doc) {
+  if (!body?.gardenName || !body?.layoutName || !body?.doc) {
     return NextResponse.json({ error: "Missing fields" }, { status: 400 });
   }
 
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-
-  const tenantId = body.tenantId;
   const gardenName = body.gardenName.trim();
   const layoutName = body.layoutName.trim();
 
   // 1) Find or create garden
-  // ✅ Fix: limit(1) prevents "multiple rows" -> maybeSingle crash
   const { data: existingGarden, error: gardenSelectErr } = await supabase
     .from("gardens")
     .select("id")
@@ -85,7 +93,6 @@ export async function POST(req: Request) {
   }
 
   // 3) Find existing layout by (tenant_id, garden_id, name)
-  // ✅ Fix: limit(1) prevents "multiple rows" -> maybeSingle crash
   const { data: existingLayout, error: layoutSelectErr } = await supabase
     .from("garden_layouts")
     .select("id, version")
@@ -134,6 +141,7 @@ export async function POST(req: Request) {
         version: nextVersion,
         updated_at: new Date().toISOString(),
       })
+      .eq("tenant_id", tenantId)
       .eq("id", layoutId);
 
     if (layoutUpdateErr) {
@@ -145,6 +153,7 @@ export async function POST(req: Request) {
   const { error: delErr } = await supabase
     .from("garden_layout_items")
     .delete()
+    .eq("tenant_id", tenantId)
     .eq("layout_id", layoutId);
 
   if (delErr) {
@@ -178,6 +187,8 @@ export async function POST(req: Request) {
   return NextResponse.json({
     ok: true,
     tenantId,
+    host,
+    mode,
     gardenId,
     layoutId,
     layoutName,

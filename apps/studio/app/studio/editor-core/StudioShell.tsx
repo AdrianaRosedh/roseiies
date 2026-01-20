@@ -8,8 +8,14 @@ import LeftToolbar from "./LeftToolbar";
 import Inspector from "./Inspector";
 import CanvasStage from "./CanvasStage";
 
-export default function StudioShell({ module }: { module: StudioModule }) {
-  const store = useWorkspaceStore(module);
+export default function StudioShell({
+  module,
+  tenantId,
+}: {
+  module: StudioModule;
+  tenantId?: string;
+}) {
+  const store = useWorkspaceStore(module, { tenantId });
 
   const activeGarden = useMemo(
     () => store.state.gardens.find((g) => g.id === store.state.activeGardenId) ?? null,
@@ -35,7 +41,7 @@ export default function StudioShell({ module }: { module: StudioModule }) {
   }, [store]);
 
   return (
-    <div className="h-screen bg-[#fbfbfb] text-black">
+    <div className="h-screen bg-[#fbfbfb] text-black p-3">
       <TopBar
         module={module}
         state={store.state}
@@ -50,7 +56,7 @@ export default function StudioShell({ module }: { module: StudioModule }) {
         onRenameGarden={store.renameGarden}
         onNewLayout={store.newLayout}
         onRenameLayout={store.renameLayout}
-        onPublish={store.publishLayout}
+        onPublish={() => store.publishLayout?.(tenantId)}
         onResetView={store.resetView}
         onCopy={store.copySelected}
         onPaste={store.pasteAtCursor}
@@ -60,7 +66,7 @@ export default function StudioShell({ module }: { module: StudioModule }) {
         canDelete={store.selectedIds.length > 0}
       />
 
-      <div className="grid grid-cols-[280px_1fr_380px] h-[calc(100vh-56px)]">
+      <div className="grid grid-cols-[280px_1fr_380px] h-[calc(100vh-56px)] mt-3 gap-3">
         <LeftToolbar
           module={module}
           tool={store.tool}
@@ -70,7 +76,7 @@ export default function StudioShell({ module }: { module: StudioModule }) {
           }}
         />
 
-        <div className="h-full w-full">
+        <div className="h-full w-full rounded-2xl border border-black/10 bg-white/50 shadow-sm overflow-hidden">
           <CanvasStage
             module={module}
             doc={doc}

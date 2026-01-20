@@ -9,8 +9,13 @@ import type {
   WorkspaceStore,
   PlantBlock,
 } from "./types";
+import type { PublishResult } from "./TopBar";
 
-const STORAGE_KEY = "roseiies:studio:workspace:v1";
+const BASE_STORAGE_KEY = "roseiies:studio:workspace:v1";
+
+function storageKey(tenantId?: string) {
+  return tenantId ? `${BASE_STORAGE_KEY}:${tenantId}` : BASE_STORAGE_KEY;
+}
 
 function uid(prefix: string) {
   return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now()}`;
@@ -42,9 +47,9 @@ function seedStore(module: StudioModule): WorkspaceStore {
   };
 }
 
-function loadStore(module: StudioModule): WorkspaceStore {
+function loadStore(module: StudioModule, key: string): WorkspaceStore {
   if (typeof window === "undefined") return seedStore(module);
-  const raw = window.localStorage.getItem(STORAGE_KEY);
+  const raw = window.localStorage.getItem(key);
   if (!raw) return seedStore(module);
   try {
     const parsed = JSON.parse(raw) as WorkspaceStore;
@@ -55,8 +60,8 @@ function loadStore(module: StudioModule): WorkspaceStore {
   }
 }
 
-function saveStore(state: WorkspaceStore) {
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+function saveStore(state: WorkspaceStore, key: string) {
+  window.localStorage.setItem(key, JSON.stringify(state));
 }
 
 function emptyDoc(module: StudioModule): LayoutDoc {
@@ -74,36 +79,37 @@ function isEditableTarget(el: EventTarget | null) {
   );
 }
 
-export function useWorkspaceStore(module: StudioModule) {
+export function useWorkspaceStore(
+  module: StudioModule,
+  opts?: { tenantId?: string }
+) {
+  const key = storageKey(opts?.tenantId);
+
   const [mounted, setMounted] = useState(false);
   const [state, setState] = useState<WorkspaceStore>(() => seedStore(module));
 
   useEffect(() => {
-    setState(loadStore(module));
+    setState(loadStore(module, key));
     setMounted(true);
-  }, [module]);
+  }, [module, key]);
 
   useEffect(() => {
     if (!mounted) return;
-    saveStore(state);
-  }, [state, mounted]);
+    saveStore(state, key);
+  }, [state, mounted, key]);
 
   const [tool, setTool] = useState<ItemType>("bed");
 
-  // ✅ multi-select
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const [stageScale, setStageScale] = useState(1);
   const [stagePos, setStagePos] = useState({ x: 40, y: 40 });
 
-  // Pan mode (spacebar)
   const [panMode, setPanMode] = useState(false);
 
-  // Cursor and viewport center for cursor paste and quick insert
   const cursorWorldRef = useRef<{ x: number; y: number } | null>(null);
   const viewportCenterWorldRef = useRef<{ x: number; y: number } | null>(null);
 
-  // Clipboard supports multi-copy
   const [clipboard, setClipboard] = useState<StudioItem[] | null>(null);
 
   const doc = useMemo(() => {
@@ -114,9 +120,7 @@ export function useWorkspaceStore(module: StudioModule) {
 
   const selected = useMemo(() => {
     if (selectedIds.length === 0) return null;
-    // show first selected in inspector if single; otherwise multi-inspector
-    const first = doc.items.find((i) => i.id === selectedIds[0]) ?? null;
-    return first;
+    return doc.items.find((i) => i.id === selectedIds[0]) ?? null;
   }, [doc.items, selectedIds]);
 
   const selectedItems = useMemo(() => {
@@ -181,10 +185,8 @@ export function useWorkspaceStore(module: StudioModule) {
     setSelectedIds([]);
   }
 
-  function newGarden() {
-    const name = window.prompt("New garden name (e.g., Invernadero):");
-    if (!name) return;
-
+  // ✅ No prompt: name is provided by UI (TopBar)
+  function newGarden(name: string) {
     const g = { id: uid("garden"), name };
     const l = {
       id: uid("layout"),
@@ -205,28 +207,22 @@ export function useWorkspaceStore(module: StudioModule) {
     setSelectedIds([]);
   }
 
-  function renameGarden() {
+  function renameGarden(name: string) {
     const active = state.gardens.find((g) => g.id === state.activeGardenId);
     if (!active) return;
-    const name = window.prompt("Garden name:", active.name);
-    if (!name) return;
     setState((prev) => ({
       ...prev,
-      gardens: prev.gardens.map((g) =>
-        g.id === active.id ? { ...g, name } : g
-      ),
+      gardens: prev.gardens.map((g) => (g.id === active.id ? { ...g, name } : g)),
     }));
   }
 
-  function newLayout() {
+  function newLayout(name: string) {
     if (!state.activeGardenId) return;
-    const count =
-      state.layouts.filter((l) => l.gardenId === state.activeGardenId).length + 1;
 
     const l = {
       id: uid("layout"),
       gardenId: state.activeGardenId,
-      name: `Layout ${count}`,
+      name,
       published: false,
       updatedAt: new Date().toISOString(),
     };
@@ -241,44 +237,52 @@ export function useWorkspaceStore(module: StudioModule) {
     setSelectedIds([]);
   }
 
-  function renameLayout() {
+  function renameLayout(name: string) {
     const active = state.layouts.find((l) => l.id === state.activeLayoutId);
     if (!active) return;
-    const name = window.prompt("Layout name:", active.name);
-    if (!name) return;
     setState((prev) => ({
       ...prev,
-      layouts: prev.layouts.map((l) =>
-        l.id === active.id ? { ...l, name } : l
-      ),
+      layouts: prev.layouts.map((l) => (l.id === active.id ? { ...l, name } : l)),
     }));
   }
 
-  async function publishLayout() {
-    const active = state.layouts.find((l) => l.id === state.activeLayoutId);
+  async function publishLayout(tenantId?: string): Promise<PublishResult> {
+    const activeLayout = state.layouts.find((l) => l.id === state.activeLayoutId);
     const activeGarden = state.gardens.find((g) => g.id === state.activeGardenId);
-    
-    if (!active || !activeGarden) return;
-    
+
+    if (!activeLayout || !activeGarden) return { ok: false, error: "No active garden/layout" };
+    if (!tenantId) return { ok: false, error: "Missing tenantId" };
+
     const res = await fetch("/api/publish-garden-layout", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        tenantId: "olivea",            // hardcode for now
-        gardenName: activeGarden.name, // match by name
-        layoutName: active.name,       // match by name
+        tenantId,
+        gardenName: activeGarden.name,
+        layoutName: activeLayout.name,
         doc,
       }),
     });
 
-  const json = await res.json();
-  if (!res.ok) {
-    alert(`Publish failed: ${json?.error ?? "unknown error"}`);
-    return;
-  }
+    const json = await res.json();
+    if (!res.ok) return { ok: false, error: json?.error ?? "unknown error" };
 
-  alert(`Published! Items written: ${json.itemsWritten}`);
-}
+    // Update local state so the ● indicator updates immediately
+    setState((prev) => ({
+      ...prev,
+      layouts: prev.layouts.map((l) => {
+        if (l.gardenId !== activeLayout.gardenId) return l;
+        const isPublished = l.id === activeLayout.id;
+        return {
+          ...l,
+          published: isPublished,
+          updatedAt: isPublished ? new Date().toISOString() : l.updatedAt,
+        };
+      }),
+    }));
+
+    return { ok: true, itemsWritten: json.itemsWritten };
+  }
 
   function deleteSelected() {
     if (selectedIds.length === 0) return;
@@ -330,7 +334,6 @@ export function useWorkspaceStore(module: StudioModule) {
     setSelectedIds([item.id]);
   }
 
-  // Cursor tracking
   function setCursorWorld(pos: { x: number; y: number } | null) {
     cursorWorldRef.current = pos;
   }
@@ -345,26 +348,29 @@ export function useWorkspaceStore(module: StudioModule) {
     addItemAtWorld({ type, x, y });
   }
 
-  // Multi-copy
   function copySelected() {
     if (selectedItems.length === 0) return;
     setClipboard(
       selectedItems.map((it) => ({
         ...it,
-        meta: { ...it.meta, plants: it.meta.plants ? [...it.meta.plants] : it.meta.plants },
-        style: { ...it.style, shadow: it.style.shadow ? { ...it.style.shadow } : undefined },
+        meta: {
+          ...it.meta,
+          plants: it.meta.plants ? [...it.meta.plants] : it.meta.plants,
+        },
+        style: {
+          ...it.style,
+          shadow: it.style.shadow ? { ...it.style.shadow } : undefined,
+        },
       }))
     );
   }
 
-  // Paste group under cursor, preserving relative layout
   function pasteAtCursor() {
     if (!clipboard || clipboard.length === 0) return;
 
     const pos = cursorWorldRef.current;
     const anchor = pos ?? viewportCenterWorldRef.current ?? { x: 240, y: 240 };
 
-    // Use the bbox of clipboard items and map it to cursor
     const minX = Math.min(...clipboard.map((i) => i.x));
     const minY = Math.min(...clipboard.map((i) => i.y));
     const maxX = Math.max(...clipboard.map((i) => i.x + i.w));
@@ -384,15 +390,20 @@ export function useWorkspaceStore(module: StudioModule) {
       id: uid(it.type),
       x: it.x + dx,
       y: it.y + dy,
-      meta: { ...it.meta, plants: it.meta.plants ? [...it.meta.plants] : it.meta.plants },
-      style: { ...it.style, shadow: it.style.shadow ? { ...it.style.shadow } : undefined },
+      meta: {
+        ...it.meta,
+        plants: it.meta.plants ? [...it.meta.plants] : it.meta.plants,
+      },
+      style: {
+        ...it.style,
+        shadow: it.style.shadow ? { ...it.style.shadow } : undefined,
+      },
     }));
 
     updateDoc({ items: [...doc.items, ...pasted] });
     setSelectedIds(pasted.map((p) => p.id));
   }
 
-  // Bed plant blocks
   function addPlantToBed(bedId: string) {
     const bed = doc.items.find((i) => i.id === bedId);
     if (!bed) return;
@@ -415,49 +426,6 @@ export function useWorkspaceStore(module: StudioModule) {
     if (!bed) return;
     const plants = bed.meta.plants ?? [];
     updateMeta(bedId, { plants: plants.filter((p) => p.id !== plantId) });
-  }
-  function bringForward() {
-    if (selectedIds.length === 0) return;
-    updateDoc({
-      items: doc.items.map((it) => {
-        if (!selectedIds.includes(it.id)) return it;
-        return { ...it, order: (it.order ?? 0) + 1 };
-      }),
-    });
-  }
-
-  function sendBackward() {
-    if (selectedIds.length === 0) return;
-    updateDoc({
-      items: doc.items.map((it) => {
-        if (!selectedIds.includes(it.id)) return it;
-        return { ...it, order: (it.order ?? 0) - 1 };
-      }),
-    });
-  }
-
-  function bringToFront() {
-    if (selectedIds.length === 0) return;
-    const maxOrder = doc.items.reduce((m, it) => Math.max(m, it.order ?? 0), 0);
-    let i = 1;
-    updateDoc({
-      items: doc.items.map((it) => {
-        if (!selectedIds.includes(it.id)) return it;
-        return { ...it, order: maxOrder + i++ };
-      }),
-    });
-  }
-
-  function sendToBack() {
-    if (selectedIds.length === 0) return;
-    const minOrder = doc.items.reduce((m, it) => Math.min(m, it.order ?? 0), 0);
-    let i = 1;
-    updateDoc({
-      items: doc.items.map((it) => {
-        if (!selectedIds.includes(it.id)) return it;
-        return { ...it, order: minOrder - i++ };
-      }),
-    });
   }
 
   // Keyboard shortcuts
@@ -562,6 +530,7 @@ export function useWorkspaceStore(module: StudioModule) {
 
     setActiveGarden,
     setActiveLayout,
+
     newGarden,
     renameGarden,
     newLayout,
@@ -572,10 +541,5 @@ export function useWorkspaceStore(module: StudioModule) {
     copySelected,
     pasteAtCursor,
     deleteSelected,
-
-    bringForward,
-    sendBackward,
-    bringToFront,
-    sendToBack,
   };
 }
