@@ -231,10 +231,6 @@ export default function TopBar(props: {
             Zoom: {Math.round(stageScale * 100)}%
           </span>
 
-          <span className="hidden md:inline-flex rounded-full border border-black/10 bg-white px-3 py-2 text-xs text-black/70 shadow-sm">
-            {panMode ? "Pan: ON (space)" : "Pan: hold space"}
-          </span>
-
           <button className={btn("ghost")} onClick={props.onResetView}>
             Reset
           </button>
