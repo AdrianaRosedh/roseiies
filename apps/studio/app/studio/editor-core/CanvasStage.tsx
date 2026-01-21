@@ -35,6 +35,27 @@ function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
+function cursorSvgDataUri(svg: string) {
+  const encoded = encodeURIComponent(svg)
+    .replace(/'/g, "%27")
+    .replace(/"/g, "%22");
+  return `url("data:image/svg+xml,${encoded}")`;
+}
+
+// 32x32 cursor, hotspot at center (16,16)
+const ROTATE_CURSOR = cursorSvgDataUri(`
+  <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32">
+    <g fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M16 6a10 10 0 1 1-7.1 2.9"/>
+      <path d="M8.9 8.9L8 4.5l4.4.9"/>
+    </g>
+    <g fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.95">
+      <path d="M16 6a10 10 0 1 1-7.1 2.9"/>
+      <path d="M8.9 8.9L8 4.5l4.4.9"/>
+    </g>
+  </svg>
+  `) + " 16 16, auto"; 
+
 function rgba(hex: string, opacity: number) {
   const h = hex.replace("#", "").trim();
   const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
@@ -279,6 +300,7 @@ export default function CanvasStage(props: {
 
   const [stageSize, setStageSize] = useState({ w: 900, h: 600 });
   const [toolbarBox, setToolbarBox] = useState<ScreenBox>(null);
+  const [toolbarOffset, setToolbarOffset] = useState<{ dx: number; dy: number } | null>(null);
 
   const [editMode, setEditMode] = useState<EditMode>("none");
 
@@ -399,6 +421,11 @@ export default function CanvasStage(props: {
   useEffect(() => {
     setEditMode("none");
   }, [props.selectedIds.join("|")]);
+
+  useEffect(() => {
+    setToolbarOffset(null);
+  }, [props.selectedIds.join("|")]);
+
 
   function onWheel(e: any) {
     e.evt.preventDefault();
@@ -528,6 +555,8 @@ export default function CanvasStage(props: {
     () => [...props.doc.items].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)),
     [props.doc.items]
   );
+
+  const showTransformer = props.selectedIds.length > 1; // only show transformer for multi-select
 
   const selectedItems = useMemo(() => {
     const set = new Set(props.selectedIds);
@@ -775,6 +804,8 @@ export default function CanvasStage(props: {
           onSetRadius={setRadiusSelected}
           onConvert={(k) => convertSelected(k)}
           canConvert={Boolean(single) && !anyLocked}
+          offset={toolbarOffset}
+          onOffsetChange={setToolbarOffset}
         />
       ) : null}
 
@@ -861,36 +892,34 @@ export default function CanvasStage(props: {
                 onSelectionUI={() => updateSelectionUIRaf()}
               />
             ))}
-
-            <Transformer
-              ref={trRef}
-              rotateEnabled={false}
-              keepRatio={selectionProfile.keepRatio}
-              padding={6}
-              borderStroke="rgba(0,0,0,0)"
-              borderStrokeWidth={0}
-              anchorSize={9}
-              anchorCornerRadius={9}
-              anchorStroke="rgba(111, 102, 255, 0.55)"
-              anchorStrokeWidth={1.2}
-              anchorFill="rgba(255,255,255,0.98)"
-              enabledAnchors={selectionProfile.anchors as any}
-              boundBoxFunc={(oldBox, newBox) => {
-                if (
-                  newBox.width < selectionProfile.minW ||
-                  newBox.height < selectionProfile.minH
-                ) {
-                  return oldBox;
-                }
-                if (selectionProfile.clampH) {
-                  const { min, max } = selectionProfile.clampH;
-                  return { ...newBox, height: clamp(newBox.height, min, max) };
-                }
-                return newBox;
-              }}
-              onTransform={() => updateSelectionUIRaf()}
-              onTransformEnd={() => updateSelectionUIRaf()}
-            />
+            {showTransformer ? (
+              <Transformer
+                ref={trRef}
+                rotateEnabled={false}
+                keepRatio={selectionProfile.keepRatio}
+                padding={6}
+                borderStroke="rgba(0,0,0,0)"
+                borderStrokeWidth={0}
+                anchorSize={9}
+                anchorCornerRadius={9}
+                anchorStroke="rgba(111, 102, 255, 0.55)"
+                anchorStrokeWidth={1.2}
+                anchorFill="rgba(255,255,255,0.98)"
+                enabledAnchors={selectionProfile.anchors as any}
+                boundBoxFunc={(oldBox, newBox) => {
+                  if (newBox.width < selectionProfile.minW || newBox.height < selectionProfile.minH) {
+                    return oldBox;
+                  }
+                  if (selectionProfile.clampH) {
+                    const { min, max } = selectionProfile.clampH;
+                    return { ...newBox, height: clamp(newBox.height, min, max) };
+                  }
+                  return newBox;
+                }}
+                onTransform={() => updateSelectionUIRaf()}
+                onTransformEnd={() => updateSelectionUIRaf()}
+              />
+            ) : null}     
           </Layer>
         </Stage>
       </div>
@@ -919,6 +948,9 @@ function ItemNode(props: {
 }) {
   const groupRef = useRef<Konva.Group>(null);
   const rectRef = useRef<Konva.Rect>(null);
+  const textRef = useRef<Konva.Text>(null);
+
+  const transformStartRef = useRef<{ x: number; y: number } | null>(null);
 
   const [hovered, setHovered] = useState(false);
 
@@ -951,6 +983,35 @@ function ItemNode(props: {
     }
   }, [props.selected, props.editMode, props.item.id]);
 
+  useEffect(() => {
+    const g = groupRef.current;
+    const t = textRef.current;
+    if (!g || !t) return;
+
+    // If group is being scaled by handles, keep text readable
+    const sx = g.scaleX();
+    const sy = g.scaleY();
+
+    // when not scaling, ensure normal
+    if (Math.abs(sx - 1) < 1e-3 && Math.abs(sy - 1) < 1e-3) {
+      t.scaleX(1);
+      t.scaleY(1);
+      t.rotation(-g.rotation());
+      return;
+    }
+
+    // Counter the group scale (prevents squish/stretch)
+    t.scaleX(1 / sx);
+    t.scaleY(1 / sy);
+
+    // Optional: keep label from getting blurry while scaling
+    // by snapping to pixel-ish values:
+    // t.scaleX(Math.round((1 / sx) * 1000) / 1000);
+    // t.scaleY(Math.round((1 / sy) * 1000) / 1000);
+
+    t.getLayer()?.batchDraw();
+  });
+  
   const s = props.item.style;
   const fill = rgba(s.fill, s.fillOpacity);
   const stroke = rgba(s.stroke, s.strokeOpacity);
@@ -1003,14 +1064,25 @@ function ItemNode(props: {
         const ny = e.target.y() - cy;
         props.onCommit({ x: nx, y: ny });
       }}
-      onTransform={() => props.onSelectionUI()}
+      onTransformStart={(e) => {
+        const node = e.target as Konva.Group;
+        transformStartRef.current = { x: node.x(), y: node.y() }; // center point
+      }}
+      onTransform={() => {
+        const node = groupRef.current;
+        if (node && transformStartRef.current) {
+          // keep center locked so it doesn't drift while scaling
+          node.position(transformStartRef.current);
+        }
+        props.onSelectionUI();
+      }}
       onTransformEnd={(e) => {
         const node = e.target as Konva.Group;
+
+        const start = transformStartRef.current ?? { x: node.x(), y: node.y() };
+
         const scaleX = node.scaleX();
         const scaleY = node.scaleY();
-
-        node.scaleX(1);
-        node.scaleY(1);
 
         const nextW = Math.max(24, props.item.w * scaleX);
         const nextH = Math.max(24, props.item.h * scaleY);
@@ -1018,8 +1090,17 @@ function ItemNode(props: {
         const nextCx = nextW / 2;
         const nextCy = nextH / 2;
 
-        const topLeftX = node.x() - nextCx;
-        const topLeftY = node.y() - nextCy;
+        // reset scale back to 1 (we bake it into w/h)
+        node.scaleX(1);
+        node.scaleY(1);
+
+        // force center back to the pinned center
+        node.position(start);
+
+        const topLeftX = start.x - nextCx;
+        const topLeftY = start.y - nextCy;
+
+        transformStartRef.current = null;
 
         props.onCommit({
           x: topLeftX,
@@ -1029,6 +1110,7 @@ function ItemNode(props: {
           r: node.rotation(),
         });
       }}
+
       onMouseEnter={() => {
         setHovered(true);
         if (!props.locked && isSelected) props.setWrapCursor("default");
@@ -1120,21 +1202,10 @@ function ItemNode(props: {
         />
       )}
 
-      {props.item.type === "bed" ? (
-        <Rect
-          x={0}
-          y={0}
-          width={props.item.w}
-          height={10}
-          fill={plantAccent}
-          opacity={0.16}
-          cornerRadius={[18, 18, 0, 0] as any}
-          listening={false}
-        />
-      ) : null}
 
       {showLabel ? (
         <Text
+          ref={textRef}
           x={14}
           y={12}
           text={props.item.label}
@@ -1440,6 +1511,7 @@ function CornerSmartHandlesPro(props: {
 }) {
   const knobR = 6;
   const rotateRing = 18;
+  const [hoverRotateCorner, setHoverRotateCorner] = useState<CornerKey | null>(null);
 
   const corners = [
     { key: "tl", x: 0, y: 0 },
@@ -1451,24 +1523,81 @@ function CornerSmartHandlesPro(props: {
   type CornerKey = (typeof corners)[number]["key"];
   type DragMode = "none" | "rotate" | "resize";
 
+  // Shift snapping
+  const shiftDownRef = useRef(false);
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      if (e.key === "Shift") shiftDownRef.current = true;
+    };
+    const up = (e: KeyboardEvent) => {
+      if (e.key === "Shift") shiftDownRef.current = false;
+    };
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+    };
+  }, []);
+
   const dragRef = useRef<{
     mode: DragMode;
     corner: CornerKey;
+
     startW: number;
     startH: number;
     startRotation: number;
+
+    // stable anchor references
     startCenterWorld: { x: number; y: number };
-    startAngleWorld: number;
-    startGroupX: number;
-    startGroupY: number;
+    startCenterParent: { x: number; y: number };
+    startAngleParent: number;
+
+    // for cancel restore
+    startScaleX: number;
+    startScaleY: number;
+    startAbsPos: { x: number; y: number };
   } | null>(null);
 
   const cleanupRef = useRef<(() => void) | null>(null);
 
-  function stagePointer(): { x: number; y: number } | null {
+  /* ---------- helpers ---------- */
+  function counterScaleLabel(g: Konva.Group) {
+    const t = g.findOne("Text") as Konva.Text | null;
+    if (!t) return;
+    
+    const sx = g.scaleX();
+    const sy = g.scaleY();
+    
+    if (Math.abs(sx) > 1e-6) t.scaleX(1 / sx);
+    if (Math.abs(sy) > 1e-6) t.scaleY(1 / sy);
+    
+    // optional: keep label upright (uncomment if desired)
+    // t.rotation(-g.rotation());
+  }
+  
+
+  function stagePointerWorld(): { x: number; y: number } | null {
     const g = props.groupRef.current;
     const stage = g?.getStage();
     return stage?.getPointerPosition() ?? null;
+  }
+
+  function parentInvTransform(): Konva.Transform | null {
+    const g = props.groupRef.current;
+    if (!g) return null;
+    const parent = g.getParent();
+    if (!parent) return null;
+    return parent.getAbsoluteTransform().copy().invert();
+  }
+
+  function pointerParent(): { x: number; y: number } | null {
+    const g = props.groupRef.current;
+    if (!g) return null;
+    const pW = stagePointerWorld();
+    if (!pW) return null;
+    const inv = parentInvTransform();
+    return inv ? inv.point(pW) : pW;
   }
 
   function centerWorld(): { x: number; y: number } | null {
@@ -1478,12 +1607,32 @@ function CornerSmartHandlesPro(props: {
     return t.point({ x: props.w / 2, y: props.h / 2 });
   }
 
+  function centerParent(): { x: number; y: number } | null {
+    const cW = centerWorld();
+    if (!cW) return null;
+    const inv = parentInvTransform();
+    return inv ? inv.point(cW) : cW;
+  }
+
+  function angleDeg(a: { x: number; y: number }, c: { x: number; y: number }) {
+    return (Math.atan2(a.y - c.y, a.x - c.x) * 180) / Math.PI;
+  }
+
   function pointerToLocal(): { x: number; y: number } | null {
     const g = props.groupRef.current;
-    const p = stagePointer();
-    if (!g || !p) return null;
+    const pW = stagePointerWorld();
+    if (!g || !pW) return null;
     const inv = g.getAbsoluteTransform().copy().invert();
-    return inv.point(p);
+    return inv.point(pW);
+  }
+
+  function isOutsideRect(local: { x: number; y: number }, pad = 2) {
+    return (
+      local.x < -pad ||
+      local.y < -pad ||
+      local.x > props.w + pad ||
+      local.y > props.h + pad
+    );
   }
 
   function cornerDist(local: { x: number; y: number }, corner: { x: number; y: number }) {
@@ -1493,6 +1642,18 @@ function CornerSmartHandlesPro(props: {
   function cursorForCornerResize(c: CornerKey) {
     if (c === "tl" || c === "br") return "nwse-resize";
     return "nesw-resize";
+  }
+
+  // Rock-solid center lock in WORLD space
+  function forceCenterLock(g: Konva.Group, desiredCenterWorld: { x: number; y: number }) {
+    const t = g.getAbsoluteTransform();
+    const curCenter = t.point({ x: props.w / 2, y: props.h / 2 });
+
+    const dx = desiredCenterWorld.x - curCenter.x;
+    const dy = desiredCenterWorld.y - curCenter.y;
+
+    const abs = g.absolutePosition();
+    g.absolutePosition({ x: abs.x + dx, y: abs.y + dy });
   }
 
   function endDrag(commit: boolean) {
@@ -1515,15 +1676,22 @@ function CornerSmartHandlesPro(props: {
       const nextW = Math.max(props.minSize, st.startW * sx);
       const nextH = Math.max(props.minSize, st.startH * sy);
 
-      const centerX = g.x();
-      const centerY = g.y();
+      // compute stable top-left from the locked center (in parent coords)
+      const lockedCenterW = st.startCenterWorld;
+      const inv = parentInvTransform();
+      const lockedCenterP = inv ? inv.point(lockedCenterW) : lockedCenterW;
 
-      const nextX = centerX - nextW / 2;
-      const nextY = centerY - nextH / 2;
+      const nextX = lockedCenterP.x - nextW / 2;
+      const nextY = lockedCenterP.y - nextH / 2;
 
+      // bake scale into w/h
       g.scaleX(1);
       g.scaleY(1);
       g.rotation(finalRot);
+
+      // keep center visually stable
+      g.position({ x: lockedCenterP.x, y: lockedCenterP.y });
+
       g.getLayer()?.batchDraw();
 
       props.onCommit({
@@ -1534,56 +1702,84 @@ function CornerSmartHandlesPro(props: {
         r: finalRot,
       });
     } else {
-      g.scaleX(1);
-      g.scaleY(1);
+      // cancel restore: rotation/scale/position
       g.rotation(st.startRotation);
+      g.scaleX(st.startScaleX);
+      g.scaleY(st.startScaleY);
+      g.absolutePosition(st.startAbsPos);
+
+      // also re-lock to original center to avoid any drift
+      forceCenterLock(g, st.startCenterWorld);
+
       g.getLayer()?.batchDraw();
     }
 
+    // always restore draggable
+    g.draggable(true);
     props.onSelectionUI();
   }
 
   function beginDrag(mode: DragMode, corner: CornerKey) {
     const g = props.groupRef.current;
     const stage = g?.getStage();
-    const p = stagePointer();
+    if (!g || !stage) return;
+
     const cW = centerWorld();
-    if (!g || !stage || !p || !cW) return;
+    const cP = centerParent();
+    const pP = pointerParent();
+
+    if (!cW || !cP || !pP) return;
 
     dragRef.current = {
       mode,
       corner,
       startW: props.w,
       startH: props.h,
-      startRotation: props.currentRotation,
+      startRotation: g.rotation(),
       startCenterWorld: cW,
-      startAngleWorld: angleDegWorld(p, cW),
-      startGroupX: g.x(),
-      startGroupY: g.y(),
+      startCenterParent: cP,
+      startAngleParent: angleDeg(pP, cP),
+      startScaleX: g.scaleX(),
+      startScaleY: g.scaleY(),
+      startAbsPos: g.absolutePosition(),
     };
 
-    if (mode === "rotate") props.setWrapCursor("crosshair");
+    // lock group dragging while resizing/rotating via handles
+    g.draggable(false);
+
+    if (mode === "rotate") props.setWrapCursor(ROTATE_CURSOR);
     if (mode === "resize") props.setWrapCursor(cursorForCornerResize(corner));
 
     const onMove = () => {
       const st = dragRef.current;
       if (!st) return;
 
-      const pNow = stagePointer();
-      if (!pNow) return;
-
       if (st.mode === "rotate") {
-        const now = angleDegWorld(pNow, st.startCenterWorld);
-        const delta = normalizeAngleDelta(now - st.startAngleWorld);
+        const pNowP = pointerParent();
+        if (!pNowP) return;
 
-        g.rotation(st.startRotation + delta);
+        const now = angleDeg(pNowP, st.startCenterParent);
+        const delta = normalizeAngleDelta(now - st.startAngleParent);
+
+        let nextRot = st.startRotation + delta;
+        if (shiftDownRef.current) nextRot = Math.round(nextRot / 15) * 15;
+
+        g.rotation(nextRot);
+
+        // keep center stable in world space
+        forceCenterLock(g, st.startCenterWorld);
+
         g.getLayer()?.batchDraw();
         props.onSelectionUI();
         return;
       }
 
       if (st.mode === "resize") {
-        const vWorld = { x: pNow.x - st.startCenterWorld.x, y: pNow.y - st.startCenterWorld.y };
+        const pW = stagePointerWorld();
+        if (!pW) return;
+
+        // resize from center in local-rotation space (stable)
+        const vWorld = { x: pW.x - st.startCenterWorld.x, y: pW.y - st.startCenterWorld.y };
         const vLocal = rotateVec(vWorld, -st.startRotation);
 
         const halfW = Math.max(props.minSize / 2, Math.abs(vLocal.x));
@@ -1594,9 +1790,9 @@ function CornerSmartHandlesPro(props: {
 
         g.scaleX(nextW / st.startW);
         g.scaleY(nextH / st.startH);
+        counterScaleLabel(g);
 
-        g.x(st.startGroupX);
-        g.y(st.startGroupY);
+        forceCenterLock(g, st.startCenterWorld);
 
         g.getLayer()?.batchDraw();
         props.onSelectionUI();
@@ -1605,7 +1801,6 @@ function CornerSmartHandlesPro(props: {
     };
 
     const onUp = () => endDrag(true);
-
     const onKey = (ev: KeyboardEvent) => {
       if (ev.key === "Escape") endDrag(false);
     };
@@ -1629,47 +1824,77 @@ function CornerSmartHandlesPro(props: {
   return (
     <Group listening>
       {corners.map((c) => (
-        <Circle
-          key={c.key}
-          x={c.x}
-          y={c.y}
-          radius={knobR}
-          fill="rgba(255,255,255,0.98)"
-          stroke="rgba(111, 102, 255, 0.65)"
-          strokeWidth={1.2}
-          shadowColor="rgba(111, 102, 255, 0.22)"
-          shadowBlur={10}
-          shadowOffsetX={0}
-          shadowOffsetY={6}
-          hitStrokeWidth={rotateRing * 2}
-          onMouseMove={() => {
-            if (dragRef.current) return;
-            const local = pointerToLocal();
-            if (!local) return;
+        <Group key={c.key}>
+          {/* Rotation ring hint */}
+          {hoverRotateCorner === c.key ? (
+          <Circle
+            x={c.x}
+            y={c.y}
+            radius={rotateRing}
+            stroke="rgba(111, 102, 255, 0.35)"
+            strokeWidth={2}
+            dash={[6, 6]}
+            listening={false}
+          />
+          ) : null} 
 
-            const d = cornerDist(local, c);
-            if (d <= knobR + 2) props.setWrapCursor(cursorForCornerResize(c.key));
-            else if (d <= rotateRing) props.setWrapCursor("crosshair");
-            else props.setWrapCursor("default");
-          }}
-          onMouseLeave={() => {
-            if (!dragRef.current) props.setWrapCursor("default");
-          }}
-          onMouseDown={() => {
-            const local = pointerToLocal();
-            if (!local) return;
+          {/* Corner knob */}
+          <Circle
+            x={c.x}
+            y={c.y}
+            radius={knobR}
+            fill="rgba(255,255,255,0.98)"
+            stroke="rgba(111, 102, 255, 0.65)"
+            strokeWidth={1.2}
+            shadowColor="rgba(111, 102, 255, 0.22)"
+            shadowBlur={10}
+            shadowOffsetX={0}
+            shadowOffsetY={6}
+            hitStrokeWidth={rotateRing * 2}
+            onMouseMove={() => {
+              if (dragRef.current) return;
+              const local = pointerToLocal();
+              if (!local) return; 
 
-            const d = cornerDist(local, c);
-            const mode: DragMode =
-              d <= knobR + 2 ? "resize" : d <= rotateRing ? "rotate" : "none";
-            if (mode === "none") return;
-            beginDrag(mode, c.key);
-          }}
-        />
+              const d = cornerDist(local, c);
+              const outside = isOutsideRect(local, 2);  
+
+              if (d <= knobR + 2) {
+                setHoverRotateCorner(null);
+                props.setWrapCursor(cursorForCornerResize(c.key));
+              } else if (d <= rotateRing && outside) {
+                setHoverRotateCorner(c.key);
+                props.setWrapCursor(ROTATE_CURSOR);
+              } else {
+                setHoverRotateCorner(null);
+                props.setWrapCursor("default");
+              }
+            }}
+            onMouseLeave={() => {
+              if (!dragRef.current) props.setWrapCursor("default");
+              setHoverRotateCorner(null);
+            }}
+            onMouseDown={() => {
+              const local = pointerToLocal();
+              if (!local) return; 
+
+              const d = cornerDist(local, c);
+              const outside = isOutsideRect(local, 2);  
+
+              const mode: DragMode =
+                d <= knobR + 2 ? "resize" : d <= rotateRing && outside ? "rotate" : "none"; 
+
+              if (mode === "none") return;
+              beginDrag(mode, c.key);
+            }}
+          />
+        </Group>
       ))}
     </Group>
-  );
+  );  
+
 }
+
 
 /* ---------------- Live Corners (sleek rectangle curve edit) ---------------- */
 
@@ -2138,30 +2363,94 @@ function FloatingToolbar(props: {
   onDelete: () => void;
   onToggleEdit: () => void;
   onSetRadius: (radius: number) => void;
+
+  offset: { dx: number; dy: number } | null;
+  onOffsetChange: (next: { dx: number; dy: number } | null) => void;
 }) {
-  const { left, top, width, height } = props.box;
+
+    const { left, top, width, height } = props.box;
 
   const [radiusOpen, setRadiusOpen] = useState(false);
   const [convertOpen, setConvertOpen] = useState(false);
 
-  let x = left + width / 2;
-
-  const margin = 10;
+  // more clearance so it doesn't cover the item
+  const margin = 34;         // higher pop-up
   const toolbarH = 42;
   const halfW = 195;
 
+  // anchor point: center above selection
+  let baseX = left + width / 2;
   const yAbove = top - margin;
-  const canPlaceAbove = yAbove - toolbarH > 8;
+  const canPlaceAbove = yAbove - toolbarH > 12;
 
-  let y = canPlaceAbove ? yAbove : top + height + margin;
+  let baseY = canPlaceAbove ? yAbove : top + height + margin;
   const transform = canPlaceAbove ? "translate(-50%, -100%)" : "translate(-50%, 0%)";
 
-  x = clamp(x, halfW, props.wrapSize.w - halfW);
-  y = clamp(y, 8, props.wrapSize.h - 8);
+  // apply user drag offset (sticky)
+  const dx = props.offset?.dx ?? 0;
+  const dy = props.offset?.dy ?? 0;
+
+  // clamp final position
+  let x = clamp(baseX + dx, halfW, props.wrapSize.w - halfW);
+  let y = clamp(baseY + dy, 10, props.wrapSize.h - 10);
+
+  // --- drag handling (mouse + touch) ---
+  const dragRef = useRef<{
+    startClientX: number;
+    startClientY: number;
+    startDx: number;
+    startDy: number;
+    dragging: boolean;
+  } | null>(null);
+
+  function onDragStart(e: React.PointerEvent) {
+    // only left click / primary touch
+    (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+
+    dragRef.current = {
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      startDx: props.offset?.dx ?? 0,
+      startDy: props.offset?.dy ?? 0,
+      dragging: true,
+    };
+  }
+
+  function onDragMove(e: React.PointerEvent) {
+    const st = dragRef.current;
+    if (!st?.dragging) return;
+
+    const nextDx = st.startDx + (e.clientX - st.startClientX);
+    const nextDy = st.startDy + (e.clientY - st.startClientY);
+
+    props.onOffsetChange({ dx: nextDx, dy: nextDy });
+  }
+
+  function onDragEnd(e: React.PointerEvent) {
+    const st = dragRef.current;
+    if (!st) return;
+    st.dragging = false;
+    dragRef.current = null;
+    try {
+      (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId);
+    } catch {}
+  }
 
   return (
     <div className="absolute z-30" style={{ left: x, top: y, transform }}>
       <div className="relative flex items-center gap-1 rounded-full border border-black/10 bg-white/88 shadow-md backdrop-blur px-2 py-1">
+        {/* Drag handle (invisible, sits above the pill) */}
+        <div
+          className="absolute -top-3 left-1/2 -translate-x-1/2 h-6 w-20 rounded-full cursor-grab active:cursor-grabbing"
+          title="Drag toolbar"
+          onPointerDown={onDragStart}
+          onPointerMove={onDragMove}
+          onPointerUp={onDragEnd}
+          onPointerCancel={onDragEnd}
+          onDoubleClick={() => props.onOffsetChange(null)}
+          style={{ touchAction: "none" }}
+        />      
+
         <ToolIconButton title="Duplicate" onClick={props.onDuplicate}>
           <IconDuplicate />
         </ToolIconButton>
