@@ -20,7 +20,6 @@ export default function TopBar(props: {
   stageScale: number;
   panMode: boolean;
 
-  // ✅ NEW: back to workplace
   onBack?: () => void;
 
   onSetGarden: (id: string) => void;
@@ -41,9 +40,12 @@ export default function TopBar(props: {
   canCopy: boolean;
   canPaste: boolean;
   canDelete: boolean;
+
+  // ✅ NEW: let StudioShellInner open mobile sheets
+  onOpenMobileMore?: () => void;
+  onOpenMobileContext?: () => void;
 }) {
-  const { state, layoutsForGarden, activeGarden, activeLayout, stageScale, panMode } =
-    props;
+  const { state, layoutsForGarden, activeGarden, activeLayout, stageScale, panMode } = props;
 
   const [mode, setMode] = useState<Mode>(null);
   const [value, setValue] = useState("");
@@ -88,9 +90,7 @@ export default function TopBar(props: {
       if (maybe && typeof (maybe as any).then === "function") {
         const res = (await maybe) as PublishResult;
         if (res.ok) {
-          setStatus(
-            `Published${res.itemsWritten != null ? ` · ${res.itemsWritten} items` : ""}`
-          );
+          setStatus(`Published${res.itemsWritten != null ? ` · ${res.itemsWritten} items` : ""}`);
         } else {
           setStatus(`Publish failed · ${res.error}`);
         }
@@ -105,10 +105,56 @@ export default function TopBar(props: {
 
   return (
     <div className="w-full">
-      <header className="h-14 flex items-center justify-between gap-3 border border-black/10 bg-white/60 backdrop-blur px-3 rounded-xl shadow-sm">
+      {/* ✅ Mobile header (compact) */}
+      <header className="md:hidden h-12 flex items-center justify-between gap-2 border border-black/10 bg-white/60 backdrop-blur px-3 rounded-xl shadow-sm">
+        <div className="flex items-center gap-2 min-w-0">
+          {props.onBack ? (
+            <button
+              onClick={props.onBack}
+              className="h-9 w-9 rounded-xl border border-black/10 bg-white/80 shadow-sm hover:bg-black/5 inline-flex items-center justify-center"
+              title="Back"
+              aria-label="Back"
+            >
+              ←
+            </button>
+          ) : null}
+
+          <button
+            type="button"
+            onClick={() => props.onOpenMobileContext?.()}
+            className="h-9 px-3 rounded-xl border border-black/10 bg-white/80 shadow-sm hover:bg-black/5 text-xs text-black/80 truncate max-w-[55vw]"
+            title="Garden / Layout"
+          >
+            {activeGarden?.name ?? "Garden"} · {activeLayout?.name ?? "Layout"}
+            {activeLayout?.published ? " ●" : ""}
+          </button>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="rounded-xl border border-black/10 bg-white/80 px-3 py-2 text-xs text-black/70 shadow-sm">
+            {Math.round(stageScale * 100)}%
+          </span>
+
+          <button
+            type="button"
+            onClick={() => props.onOpenMobileMore?.()}
+            className="h-9 w-9 rounded-xl border border-black/10 bg-white/80 shadow-sm hover:bg-black/5 inline-flex items-center justify-center"
+            title="More"
+            aria-label="More"
+          >
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <circle cx="6" cy="10" r="1.5" fill="rgba(15,23,42,0.75)" />
+              <circle cx="10" cy="10" r="1.5" fill="rgba(15,23,42,0.75)" />
+              <circle cx="14" cy="10" r="1.5" fill="rgba(15,23,42,0.75)" />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      {/* ✅ Desktop header (your existing UI) */}
+      <header className="hidden md:flex h-14 items-center justify-between gap-3 border border-black/10 bg-white/60 backdrop-blur px-3 rounded-xl shadow-sm">
         {/* LEFT: garden + layout */}
         <div className="flex items-center gap-2 min-w-0">
-          {/* ✅ Workplace button moved here */}
           {props.onBack ? (
             <button
               onClick={props.onBack}

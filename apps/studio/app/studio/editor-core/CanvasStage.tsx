@@ -129,6 +129,29 @@ function useRafThrottled<T extends (...args: any[]) => void>(fn: T) {
   }, []) as T;
 }
 
+function useIsCoarsePointer() {
+  const [isCoarse, setIsCoarse] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+
+    const mq = window.matchMedia("(pointer: coarse)");
+    const update = () => setIsCoarse(Boolean(mq.matches));
+
+    update();
+    // Safari uses addListener/removeListener in older versions
+    if ("addEventListener" in mq) mq.addEventListener("change", update);
+    else (mq as any).addListener(update);
+
+    return () => {
+      if ("removeEventListener" in mq) mq.removeEventListener("change", update);
+      else (mq as any).removeListener(update);
+    };
+  }, []);
+
+  return isCoarse;
+}
+
 /* ---------------- Bezier helpers ---------------- */
 
 function roundedRectToBezierPath(item: StudioItem): BezierPath {
@@ -303,6 +326,7 @@ export default function CanvasStage(props: {
   const [toolbarOffset, setToolbarOffset] = useState<{ dx: number; dy: number } | null>(null);
 
   const [editMode, setEditMode] = useState<EditMode>("none");
+  const isCoarse = useIsCoarsePointer();
 
   const panningRef = useRef({
     active: false,
@@ -347,6 +371,70 @@ export default function CanvasStage(props: {
       y: (pointer.y - props.stagePos.y) / props.stageScale,
     };
   }
+
+  const pinchRef = useRef<{ lastDist: number; lastCenter: { x: number; y: number } | null }>({
+    lastDist: 0,
+    lastCenter: null,
+  });
+  
+  function dist(a: { x: number; y: number }, b: { x: number; y: number }) {
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  }
+  
+  function center(a: { x: number; y: number }, b: { x: number; y: number }) {
+    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  }
+  
+  function onTouchMove(e: any) {
+    const stage = stageRef.current;
+    if (!stage) return;
+  
+    const pts = stage.getPointersPositions();
+    if (!pts || pts.length !== 2) return;
+  
+    e.evt.preventDefault();
+  
+    const p1 = pts[0];
+    const p2 = pts[1];
+  
+    const c = center(p1, p2);
+    const d = dist(p1, p2);
+  
+    const pr = pinchRef.current;
+  
+    if (!pr.lastCenter) {
+      pr.lastCenter = c;
+      pr.lastDist = d;
+      return;
+    }
+  
+    const oldScale = props.stageScale;
+    const scaleBy = d / pr.lastDist;
+    const newScale = clamp(oldScale * scaleBy, 0.35, 2.6);
+  
+    const pointTo = {
+      x: (c.x - props.stagePos.x) / oldScale,
+      y: (c.y - props.stagePos.y) / oldScale,
+    };
+  
+    props.setStageScale(newScale);
+    props.setStagePos({
+      x: c.x - pointTo.x * newScale,
+      y: c.y - pointTo.y * newScale,
+    });
+  
+    pr.lastCenter = c;
+    pr.lastDist = d;
+  
+    updateSelectionUIRaf();
+  }
+  
+  function onTouchEnd() {
+    pinchRef.current.lastCenter = null;
+    pinchRef.current.lastDist = 0;
+  }
+  
+
 
   const updateSelectionUI = useCallback(() => {
     const stage = stageRef.current;
@@ -782,6 +870,7 @@ export default function CanvasStage(props: {
       ref={wrapRef}
       className="relative h-full w-full"
       style={{
+        touchAction: "none",
         cursor: panningRef.current.active ? "grabbing" : cursorRef.current || "default",
         background:
           "radial-gradient(circle at 30% 15%, rgba(255,255,255,0.95), rgba(249,247,242,1) 45%, rgba(244,240,232,1) 100%)",
@@ -828,6 +917,9 @@ export default function CanvasStage(props: {
           onMouseMove={onMouseMove}
           onMouseUp={onMouseUp}
           onDblClick={onDblClick}
+          onTouchMove={onTouchMove}
+          onTouchEnd={onTouchEnd}
+          onTouchCancel={onTouchEnd}
         >
           <Layer>
             <Rect
@@ -890,6 +982,7 @@ export default function CanvasStage(props: {
                   updateSelectionUIRaf();
                 }}
                 onSelectionUI={() => updateSelectionUIRaf()}
+                isCoarse={isCoarse}
               />
             ))}
             {showTransformer ? (
@@ -935,6 +1028,7 @@ function ItemNode(props: {
   locked: boolean;
   stageScale: number;
   editMode: EditMode;
+  isCoarse: boolean;
 
   setWrapCursor: (cursor: string) => void;
 
@@ -949,6 +1043,23 @@ function ItemNode(props: {
   const groupRef = useRef<Konva.Group>(null);
   const rectRef = useRef<Konva.Rect>(null);
   const textRef = useRef<Konva.Text>(null);
+
+  function keepLabelReadable() {
+    const g = groupRef.current;
+    const t = textRef.current;
+    if (!g || !t) return;
+
+    const sx = g.scaleX();
+    const sy = g.scaleY();
+
+    if (Math.abs(sx) > 1e-6) t.scaleX(1 / sx);
+    if (Math.abs(sy) > 1e-6) t.scaleY(1 / sy);
+
+    // If you want label to stay upright even if the shape rotates:
+    // t.rotation(-g.rotation());
+
+    t.getLayer()?.batchDraw();
+  }
 
   const transformStartRef = useRef<{ x: number; y: number } | null>(null);
 
@@ -1071,9 +1182,9 @@ function ItemNode(props: {
       onTransform={() => {
         const node = groupRef.current;
         if (node && transformStartRef.current) {
-          // keep center locked so it doesn't drift while scaling
           node.position(transformStartRef.current);
         }
+        keepLabelReadable();
         props.onSelectionUI();
       }}
       onTransformEnd={(e) => {
@@ -1101,6 +1212,12 @@ function ItemNode(props: {
         const topLeftY = start.y - nextCy;
 
         transformStartRef.current = null;
+        // ✅ reset label local scale back to normal after bake
+        if (textRef.current) {
+          textRef.current.scaleX(1);
+          textRef.current.scaleY(1);
+          // textRef.current.rotation(0); // only if you used the "upright" option above
+        }
 
         props.onCommit({
           x: topLeftX,
@@ -1238,6 +1355,7 @@ function ItemNode(props: {
           setWrapCursor={props.setWrapCursor}
           onSelectionUI={props.onSelectionUI}
           onCommit={(patch) => props.onCommit(patch)}
+          isCoarse={props.isCoarse}
         />
       ) : null}
 
@@ -1508,9 +1626,13 @@ function CornerSmartHandlesPro(props: {
   setWrapCursor: (cursor: string) => void;
   onSelectionUI: () => void;
   onCommit: (patch: Partial<StudioItem>) => void;
+  isCoarse: boolean;
+  
 }) {
-  const knobR = 6;
-  const rotateRing = 18;
+  const knobR = props.isCoarse ? 9 : 6;
+  const rotateRing = props.isCoarse ? 28 : 18;
+  // also consider:
+  const hitStroke = props.isCoarse ? rotateRing * 2.4 : rotateRing * 2;
   const [hoverRotateCorner, setHoverRotateCorner] = useState<CornerKey | null>(null);
 
   const corners = [
@@ -1563,19 +1685,20 @@ function CornerSmartHandlesPro(props: {
 
   /* ---------- helpers ---------- */
   function counterScaleLabel(g: Konva.Group) {
+    // safest: string selector (no predicate, no implicit-any)
     const t = g.findOne("Text") as Konva.Text | null;
-    if (!t) return;
-    
+    if (!t) return; 
+
     const sx = g.scaleX();
-    const sy = g.scaleY();
-    
+    const sy = g.scaleY();  
+
     if (Math.abs(sx) > 1e-6) t.scaleX(1 / sx);
-    if (Math.abs(sy) > 1e-6) t.scaleY(1 / sy);
-    
-    // optional: keep label upright (uncomment if desired)
-    // t.rotation(-g.rotation());
-  }
-  
+    if (Math.abs(sy) > 1e-6) t.scaleY(1 / sy);  
+
+    t.getLayer()?.batchDraw();
+  } 
+
+
 
   function stagePointerWorld(): { x: number; y: number } | null {
     const g = props.groupRef.current;
