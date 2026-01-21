@@ -34,9 +34,6 @@ export default function StudioChrome({
               />
 
               <div className="flex items-baseline gap-2 min-w-0">
-                <span className="text-sm font-semibold tracking-tight">
-                  Studio
-                </span>
 
                 {/* Section label (e.g., Garden App) */}
                 {sectionLabel ? (
@@ -64,7 +61,7 @@ export default function StudioChrome({
             <div className="flex items-center gap-2 shrink-0">
               {rightSlot}
               <div className="hidden lg:block text-xs text-black/45">
-                Roseiies Platform
+                Roseiies Studio
               </div>
             </div>
           </div>
