@@ -1,47 +1,51 @@
 "use client";
 
-import { useState } from "react";
-import WorkplaceHome, { type AppTile } from "./WorkplaceHome";
-import GardenApp, { type GardenView } from "./apps/garden/GardenApp";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import StudioChrome from "./StudioChrome";
+import WorkplaceHome from "./WorkplaceHome";
 import type { PortalContext } from "../lib/portal/getPortalContext";
+import { APP_REGISTRY, APP_TILES, isKnownApp } from "./apps/registry";
 
-export default function StudioApp({ portal }: { portal: PortalContext }) {
-  const [openApp, setOpenApp] = useState<string | null>(null);
+function normalize(s: unknown) {
+  return decodeURIComponent(String(s ?? "")).trim().toLowerCase();
+}
 
-  // ✅ required by GardenApp types
-  const [gardenView, setGardenView] = useState<GardenView>("designer");
+export default function StudioApp({
+  portal,
+  initialAppId = null,
+}: {
+  portal: PortalContext;
+  initialAppId?: string | null;
+}) {
+  const router = useRouter();
 
-  const apps: AppTile[] = [
-    {
-      id: "garden",
-      name: "Garden App",
-      description: "Map + Sheets — one truth layer → role projections.",
-      status: "beta",
-    },
-    {
-      id: "menus",
-      name: "Menu Intelligence",
-      description: "Crop → dish links, cost, R&D cycles (coming soon).",
-      status: "soon",
-    },
-    {
-      id: "ops",
-      name: "Ops Tasks",
-      description: "Work orders, checklists, schedules (coming soon).",
-      status: "soon",
-    },
-  ];
+  const [openApp, setOpenApp] = useState<string | null>(
+    initialAppId ? normalize(initialAppId) : null
+  );
 
-  if (openApp === "garden") {
+  useEffect(() => {
+    setOpenApp(initialAppId ? normalize(initialAppId) : null);
+  }, [initialAppId]);
+
+  const appDef = useMemo(() => {
+    if (!openApp) return null;
+    return APP_REGISTRY[openApp] ?? null;
+  }, [openApp]);
+
+  // If we land on /app/something-unknown, don’t break — just show Workplace
+  const showWorkplace = !openApp || !isKnownApp(openApp) || appDef?.tile.status === "soon";
+
+  if (!showWorkplace && appDef) {
     return (
-      <StudioChrome portal={portal} sectionLabel="Garden App">
-        <GardenApp
-          onBack={() => setOpenApp(null)}
-          portal={portal}
-          view={gardenView}
-          onViewChange={setGardenView}
-        />
+      <StudioChrome portal={portal} sectionLabel={appDef.tile.name}>
+        {appDef.render({
+          portal,
+          onBack: () => {
+            setOpenApp(null);
+            router.push("/");
+          },
+        })}
       </StudioChrome>
     );
   }
@@ -49,11 +53,12 @@ export default function StudioApp({ portal }: { portal: PortalContext }) {
   return (
     <StudioChrome portal={portal} sectionLabel="Workplace">
       <WorkplaceHome
-        apps={apps}
-        onOpen={(id: string) => {
-          console.log("[StudioApp] open:", id);
-          if (id === "garden") setGardenView("designer");
-          setOpenApp(id);
+        apps={APP_TILES}
+        onOpen={(id) => {
+          const normalized = normalize(id);
+
+          // Only navigate; do not “open” via local state (URL is the source of truth)
+          router.push(`/app/${normalized}`);
         }}
       />
     </StudioChrome>

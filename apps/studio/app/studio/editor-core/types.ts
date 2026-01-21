@@ -18,7 +18,10 @@ export type ItemStyle = {
   stroke: string;
   strokeOpacity: number; // 0..1
   strokeWidth: number;
+
+  // curvature for rounded rects (when NOT using a bezier path)
   radius: number;
+
   shadow?: ShadowStyle;
 };
 
@@ -37,6 +40,51 @@ export type PlantBlock = {
   pins?: PlantPin[];
 };
 
+// ✅ Bezier path data (Illustrator-style)
+// Coordinates are normalized 0..1 relative to the item box.
+export type BezierHandle = { x: number; y: number }; // 0..1
+export type BezierPoint = {
+  id: string;
+  x: number; // 0..1
+  y: number; // 0..1
+  in?: BezierHandle;
+  out?: BezierHandle;
+};
+
+export type BezierPath = {
+  closed: boolean;
+  points: BezierPoint[];
+};
+
+// ✅ Per-corner radii for Live Corners
+export type CornerRadii = { tl: number; tr: number; br: number; bl: number };
+
+// ✅ Curvature tool (Illustrator-like): anchors only, auto-smooth
+export type CurvaturePoint = {
+  id: string;
+  x: number; // 0..1
+  y: number; // 0..1
+  corner?: boolean; // true => corner, false/undefined => smooth
+};
+
+export type CurvaturePath = {
+  closed: boolean;
+  points: CurvaturePoint[];
+  tension?: number; // 0..2 (default ~1)
+};
+
+// ✅ Polygon tool: straight-edge arbitrary shapes
+export type PolygonPoint = {
+  id: string;
+  x: number; // 0..1
+  y: number; // 0..1
+};
+
+export type PolygonPath = {
+  closed: boolean;
+  points: PolygonPoint[];
+};
+
 export type StudioItem = {
   id: string;
   type: ItemType;
@@ -52,11 +100,23 @@ export type StudioItem = {
     status?: "abundant" | "fragile" | "dormant";
     public?: boolean;
 
-    // Beds can show a “design intent” list, but operational truth comes later from plantings.
+    // ✅ Advanced Bezier (Pen-tool style)
+    bezier?: BezierPath;
+
+    // ✅ Sleek Curvature (Illustrator Curvature tool style)
+    curvature?: CurvaturePath;
+
+    // ✅ Straight-edge arbitrary shape
+    polygon?: PolygonPath;
+
     plants?: PlantBlock[];
 
-    // ✅ NEW: zones are nested “inside a bed” via parentBedId
     parentBedId?: string; // only for item.type === "zone"
+
+    locked?: boolean;
+
+    // ✅ Live Corners per-corner mode
+    cornerRadii?: CornerRadii;
   };
 
   style: ItemStyle;
