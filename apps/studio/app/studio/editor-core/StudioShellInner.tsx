@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { StudioModule } from "./types";
 import type { PortalContext } from "../../lib/portal/getPortalContext";
 import TopBar from "./TopBar";
@@ -8,7 +8,7 @@ import LeftToolbar from "./LeftToolbar";
 import Inspector from "./Inspector";
 import CanvasStage from "./CanvasStage";
 
-type MobileSheetKind = "tools" | "inspector" | "more" | null;
+type MobileSheetKind = "context" | "tools" | "inspector" | "more" | null;
 
 export default function StudioShellInner({
   module,
@@ -65,6 +65,9 @@ export default function StudioShellInner({
   const canPaste = !!store.clipboard;
   const canDelete = store.selectedIds.length > 0;
 
+  const toggleSheet = (k: Exclude<MobileSheetKind, null>) =>
+    setMobileSheet((v) => (v === k ? null : k));
+
   return (
     <div className="w-full">
       <TopBar
@@ -90,6 +93,9 @@ export default function StudioShellInner({
         canCopy={canCopy}
         canPaste={canPaste}
         canDelete={canDelete}
+        // ✅ Wire mobile header buttons
+        onOpenMobileMore={() => toggleSheet("more")}
+        onOpenMobileContext={() => toggleSheet("context")}
       />
 
       {/* Desktop: left rail | canvas | right rail */}
@@ -190,7 +196,7 @@ export default function StudioShellInner({
         </div>
       </div>
 
-      {/* Mobile: canvas + floating bottom bar + bottom sheets */}
+      {/* Mobile: canvas + bottom bar + sheets */}
       <div className="md:hidden mt-3 rounded-2xl border border-black/10 bg-white/40 shadow-sm overflow-hidden relative h-[calc(100vh-56px-56px-28px)]">
         <CanvasStage
           module={module}
@@ -218,14 +224,114 @@ export default function StudioShellInner({
           canCopy={canCopy}
           canPaste={canPaste}
           canDelete={canDelete}
-          onTools={() => setMobileSheet((v) => (v === "tools" ? null : "tools"))}
-          onInspector={() =>
-            setMobileSheet((v) => (v === "inspector" ? null : "inspector"))
-          }
-          onMore={() => setMobileSheet((v) => (v === "more" ? null : "more"))}
+          onTools={() => toggleSheet("tools")}
+          onInspector={() => toggleSheet("inspector")}
+          onMore={() => toggleSheet("more")}
         />
 
-        {/* Sheets */}
+        {/* Context sheet (Garden/Layout) */}
+        <MobileSheet
+          open={mobileSheet === "context"}
+          title="Garden · Layout"
+          onClose={() => setMobileSheet(null)}
+          heightClassName="h-[62vh]"
+        >
+          <div className="p-3 space-y-3">
+            <div className="space-y-2">
+              <div className="text-[11px] text-black/55">Garden</div>
+              <select
+                value={store.state.activeGardenId ?? ""}
+                onChange={(e) => store.setActiveGarden(e.target.value)}
+                className="w-full rounded-xl border border-black/10 bg-white px-3 py-3 text-sm"
+              >
+                {store.state.gardens.map((g: any) => (
+                  <option key={g.id} value={g.id}>
+                    {g.name}
+                  </option>
+                ))}
+              </select>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className="flex-1 rounded-xl border border-black/10 bg-white/80 px-3 py-3 text-sm"
+                  onClick={() => {
+                    const name = prompt("New garden name?");
+                    if (name?.trim()) store.newGarden(name.trim());
+                  }}
+                >
+                  + Garden
+                </button>
+                <button
+                  type="button"
+                  className="flex-1 rounded-xl border border-black/10 bg-white/80 px-3 py-3 text-sm disabled:opacity-40"
+                  disabled={!activeGarden}
+                  onClick={() => {
+                    const name = prompt("Rename garden:", activeGarden?.name ?? "");
+                    if (name?.trim()) store.renameGarden(name.trim());
+                  }}
+                >
+                  Rename
+                </button>
+              </div>
+            </div>
+
+            <div className="h-px bg-black/10" />
+
+            <div className="space-y-2">
+              <div className="text-[11px] text-black/55">Layout</div>
+              <select
+                value={store.state.activeLayoutId ?? ""}
+                onChange={(e) => store.setActiveLayout(e.target.value)}
+                className="w-full rounded-xl border border-black/10 bg-white px-3 py-3 text-sm"
+              >
+                {layoutsForGarden.map((l: any) => (
+                  <option key={l.id} value={l.id}>
+                    {l.published ? "● " : ""}
+                    {l.name}
+                  </option>
+                ))}
+              </select>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className="flex-1 rounded-xl border border-black/10 bg-white/80 px-3 py-3 text-sm disabled:opacity-40"
+                  disabled={!store.state.activeGardenId}
+                  onClick={() => {
+                    const name = prompt("New layout name?");
+                    if (name?.trim()) store.newLayout(name.trim());
+                  }}
+                >
+                  + Layout
+                </button>
+                <button
+                  type="button"
+                  className="flex-1 rounded-xl border border-black/10 bg-white/80 px-3 py-3 text-sm disabled:opacity-40"
+                  disabled={!activeLayout}
+                  onClick={() => {
+                    const name = prompt("Rename layout:", activeLayout?.name ?? "");
+                    if (name?.trim()) store.renameLayout(name.trim());
+                  }}
+                >
+                  Rename
+                </button>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              className="w-full rounded-xl border border-black/10 bg-[rgba(94,118,88,0.18)] px-4 py-3 text-sm shadow-sm hover:bg-[rgba(94,118,88,0.24)]"
+              onClick={() => {
+                store.publishLayout?.(portal.tenantId);
+                setMobileSheet(null);
+              }}
+              disabled={!activeLayout}
+            >
+              Publish
+            </button>
+          </div>
+        </MobileSheet>
+
+        {/* Tools sheet */}
         <MobileSheet
           open={mobileSheet === "tools"}
           title="Tools"
@@ -238,13 +344,13 @@ export default function StudioShellInner({
               setTool={(t: any) => {
                 store.setTool(t);
                 store.quickInsert(t);
-                // after choosing a tool on mobile, close sheet (feels modern)
                 setMobileSheet(null);
               }}
             />
           </div>
         </MobileSheet>
 
+        {/* Inspector sheet */}
         <MobileSheet
           open={mobileSheet === "inspector"}
           title="Inspector"
@@ -267,6 +373,7 @@ export default function StudioShellInner({
           </div>
         </MobileSheet>
 
+        {/* Actions sheet (opened by bottom bar "More" OR top bar "…") */}
         <MobileSheet
           open={mobileSheet === "more"}
           title="Actions"
@@ -374,10 +481,7 @@ function CollapsedRail({
 
       <span
         className="text-[10px] text-black/35 tracking-wide select-none"
-        style={{
-          writingMode: "vertical-rl",
-          transform: "rotate(180deg)",
-        }}
+        style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}
       >
         {title}
       </span>
@@ -398,7 +502,6 @@ function IconChevronLeft() {
     </svg>
   );
 }
-
 function IconChevronRight() {
   return (
     <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -429,9 +532,7 @@ function MobileBottomBar(props: {
   return (
     <div
       className="absolute left-0 right-0 bottom-0 z-20 px-3 pb-3"
-      style={{
-        paddingBottom: "calc(12px + env(safe-area-inset-bottom))",
-      }}
+      style={{ paddingBottom: "calc(12px + env(safe-area-inset-bottom))" }}
     >
       <div className="mx-auto max-w-140 rounded-2xl border border-black/10 bg-white/92 shadow-lg backdrop-blur px-2 py-2 flex items-center justify-between">
         <MobileBarButton
@@ -442,7 +543,7 @@ function MobileBottomBar(props: {
         />
         <div className="w-px h-8 bg-black/10" />
         <MobileBarButton
-          label="Inspector"
+          label="Inspect"
           active={active === "inspector"}
           onClick={props.onInspector}
           icon={<IconSliders />}
@@ -482,6 +583,12 @@ function MobileBarButton(props: {
   );
 }
 
+/**
+ * ✅ Smooth popup:
+ * - Keeps mounted for ~220ms after close so exit animation can play
+ * - Backdrop fades
+ * - Sheet slides up/down
+ */
 function MobileSheet(props: {
   open: boolean;
   title: string;
@@ -489,16 +596,38 @@ function MobileSheet(props: {
   children: React.ReactNode;
   heightClassName?: string;
 }) {
-  if (!props.open) return null;
+  const [mounted, setMounted] = useState(props.open);
+  const closeTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (props.open) {
+      if (closeTimer.current) window.clearTimeout(closeTimer.current);
+      setMounted(true);
+      return;
+    }
+    // close: allow animation to finish
+    closeTimer.current = window.setTimeout(() => setMounted(false), 220);
+    return () => {
+      if (closeTimer.current) window.clearTimeout(closeTimer.current);
+    };
+  }, [props.open]);
+
+  if (!mounted) return null;
+
+  const open = props.open;
 
   return (
     <div className="absolute inset-0 z-30">
       {/* Backdrop */}
       <button
         type="button"
-        className="absolute inset-0 bg-black/15"
+        className={[
+          "absolute inset-0 bg-black/15 transition-opacity duration-200",
+          open ? "opacity-100" : "opacity-0",
+        ].join(" ")}
         onClick={props.onClose}
         aria-label="Close sheet"
+        style={{ touchAction: "none" }}
       />
 
       {/* Sheet */}
@@ -506,11 +635,11 @@ function MobileSheet(props: {
         className={[
           "absolute left-0 right-0 bottom-0 mx-auto max-w-175",
           "rounded-t-3xl border border-black/10 bg-white shadow-2xl",
+          "transition-transform duration-200 will-change-transform",
+          open ? "translate-y-0" : "translate-y-3",
           props.heightClassName ?? "h-[52vh]",
         ].join(" ")}
-        style={{
-          paddingBottom: "env(safe-area-inset-bottom)",
-        }}
+        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       >
         <div className="px-4 pt-3 pb-2 flex items-center justify-between">
           <div className="text-sm font-semibold text-black/85">{props.title}</div>

@@ -287,6 +287,113 @@ function rectToCurvature(closed: boolean = true): CurvaturePath {
   };
 }
 
+function makeNoiseCanvas(size = 240) {
+  const c = document.createElement("canvas");
+  c.width = size;
+  c.height = size;
+  const ctx = c.getContext("2d");
+  if (!ctx) return c;
+
+  const img = ctx.createImageData(size, size);
+  // subtle monochrome noise (warm)
+  for (let i = 0; i < img.data.length; i += 4) {
+    const v = 210 + Math.floor(Math.random() * 30); // 210..239
+    img.data[i + 0] = v; // r
+    img.data[i + 1] = v - 4; // g
+    img.data[i + 2] = v - 10; // b
+    img.data[i + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+
+  // add a few bigger “grain” dots
+  ctx.globalAlpha = 0.06;
+  for (let i = 0; i < 240; i++) {
+    const x = Math.random() * size;
+    const y = Math.random() * size;
+    const r = 0.6 + Math.random() * 1.6;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(120,90,60,1)";
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  return c;
+}
+
+function makeLeafSpeckleCanvas(size = 420) {
+  const c = document.createElement("canvas");
+  c.width = size;
+  c.height = size;
+  const ctx = c.getContext("2d");
+  if (!ctx) return c;
+
+  // transparent base
+  ctx.clearRect(0, 0, size, size);
+
+  // A muted, cinematic “canopy shadow” tone (not neon green)
+  const SHADOW = "rgba(58, 86, 58, 1)";
+  const VEIN = "rgba(40, 60, 40, 1)";
+
+  // ---- 1) Big soft leaf-shadow blobs ----
+  // fewer shapes, bigger, more natural
+  const blobCount = Math.round(size / 18); // ~23 at 420
+  for (let i = 0; i < blobCount; i++) {
+    const x = Math.random() * size;
+    const y = Math.random() * size;
+
+    const rx = 40 + Math.random() * 130;  // width
+    const ry = 25 + Math.random() * 95;   // height
+    const rot = (Math.random() * 180) * (Math.PI / 180);
+
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(rot);
+
+    // faux blur by layering multiple ellipses
+    for (let k = 0; k < 7; k++) {
+      ctx.globalAlpha = 0.018; // subtle
+      ctx.fillStyle = SHADOW;
+
+      ctx.beginPath();
+      ctx.ellipse(0, 0, rx + k * 7, ry + k * 7, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.restore();
+  }
+
+  // ---- 2) A few “leaf vein” streaks (adds realism) ----
+  // super subtle, just enough to read as organic shadow
+  ctx.globalAlpha = 0.06;
+  for (let i = 0; i < Math.round(size / 60); i++) {
+    const x = Math.random() * size;
+    const y = Math.random() * size;
+
+    const w = 60 + Math.random() * 160;
+    const h = 1.2 + Math.random() * 2.2;
+    const rot = (Math.random() * 180) * (Math.PI / 180);
+
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(rot);
+
+    // draw as a slightly feathered rect
+    for (let k = 0; k < 4; k++) {
+      ctx.globalAlpha = 0.012;
+      ctx.fillStyle = VEIN;
+      ctx.fillRect(-w / 2, -h / 2, w, h);
+    }
+
+    ctx.restore();
+  }
+
+  ctx.globalAlpha = 1;
+
+  return c;
+}
+
+
 /* ---------------- Main ---------------- */
 
 type EditMode = "none" | "corners" | "polygon" | "curvature" | "bezier";
@@ -365,12 +472,68 @@ export default function CanvasStage(props: {
     return () => ro.disconnect();
   }, []);
 
+  function mod(n: number, m: number) {
+    return ((n % m) + m) % m;
+  }
+
   function worldFromScreen(pointer: { x: number; y: number }) {
     return {
       x: (pointer.x - props.stagePos.x) / props.stageScale,
       y: (pointer.y - props.stagePos.y) / props.stageScale,
     };
   }
+
+  // --- Garden texture layers (client only) ---
+  const [noiseImg, setNoiseImg] = useState<HTMLImageElement | null>(null);
+  const [leafImg, setLeafImg] = useState<HTMLImageElement | null>(null);
+  // Parallax: canopy moves slower than pan, grain moves slightly
+  const leafSize = 520; // MUST match makeLeafSpeckleCanvas() call
+  const noiseSize = 240;
+
+  const leafOffset = {
+    x: mod(-props.stagePos.x * 0.18, leafSize),
+    y: mod(-props.stagePos.y * 0.18, leafSize),
+  };
+
+  const noiseOffset = {
+    x: mod(-props.stagePos.x * 0.06, noiseSize),
+    y: mod(-props.stagePos.y * 0.06, noiseSize),
+  };
+
+  function canvasToImage(canvas: HTMLCanvasElement): Promise<HTMLImageElement> {
+    return new Promise((resolve, reject) => {
+      const img = new window.Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = canvas.toDataURL("image/png");
+    });
+  }
+
+  useEffect(() => {
+    let alive = true;
+
+    (async () => {
+      // only runs client-side
+      const noiseCanvas = makeNoiseCanvas(240);
+      const leafCanvas = makeLeafSpeckleCanvas(520);
+
+      const [nImg, lImg] = await Promise.all([
+        canvasToImage(noiseCanvas),
+        canvasToImage(leafCanvas),
+      ]);
+
+      if (!alive) return;
+      setNoiseImg(nImg);
+      setLeafImg(lImg);
+    })().catch(() => {
+      // ignore texture failures; app still works
+    });
+
+    return () => {
+      alive = false;
+    };
+  }, []);
+
 
   const pinchRef = useRef<{ lastDist: number; lastCenter: { x: number; y: number } | null }>({
     lastDist: 0,
@@ -706,9 +869,13 @@ export default function CanvasStage(props: {
 
   // Grid (less busy): fade + hide when zoomed out
   const gridStep = 80;
-  const showGrid = props.stageScale >= 0.6;
-  const gridAlpha = clamp((props.stageScale - 0.6) / 0.8, 0, 1);
-  const gridStroke = `rgba(34,54,44,${0.04 + 0.06 * gridAlpha})`;
+  const showGrid = props.stageScale >= 0.55;
+  const gridAlpha = clamp((props.stageScale - 0.55) / 0.9, 0, 1);
+
+  // garden green tint; keep it *very* subtle
+  const gridStroke = `rgba(94, 118, 88, ${0.03 + 0.06 * gridAlpha})`;
+  const gridDash = props.stageScale > 1.1 ? [6, 10] : [3, 10];
+
 
   const gridLinesX = useMemo(() => {
     const xs: number[] = [];
@@ -873,7 +1040,8 @@ export default function CanvasStage(props: {
         touchAction: "none",
         cursor: panningRef.current.active ? "grabbing" : cursorRef.current || "default",
         background:
-          "radial-gradient(circle at 30% 15%, rgba(255,255,255,0.95), rgba(249,247,242,1) 45%, rgba(244,240,232,1) 100%)",
+          "radial-gradient(circle at 28% 10%, rgba(214, 234, 210, 0.65), rgba(248, 246, 240, 1) 40%, rgba(243, 239, 231, 1) 100%)",
+
       }}
     >
       {toolbarBox ? (
@@ -922,20 +1090,126 @@ export default function CanvasStage(props: {
           onTouchCancel={onTouchEnd}
         >
           <Layer>
+            {/* --- Plot background: soil card --- */}
             <Rect
               x={0}
               y={0}
               width={props.doc.canvas.width}
               height={props.doc.canvas.height}
-              fill="rgba(255,255,255,0.86)"
-              stroke="rgba(2,6,23,0.09)"
+              cornerRadius={26}
+              // warm soil gradient
+              fillLinearGradientStartPoint={{ x: 0, y: 0 }}
+              fillLinearGradientEndPoint={{ x: 0, y: props.doc.canvas.height }}
+              fillLinearGradientColorStops={[
+                0,
+                "rgba(249,247,242,1)",
+                0.22,
+                "rgba(243,236,226,1)",
+                0.62,
+                "rgba(234,223,206,1)",
+                1,
+                "rgba(224,209,188,1)",
+              ]}
+              stroke="rgba(56, 72, 56, 0.18)"
               strokeWidth={2}
-              cornerRadius={22}
-              shadowColor="rgba(15,23,42,0.12)"
+              shadowColor="rgba(15,23,42,0.10)"
               shadowBlur={18}
               shadowOffsetX={0}
-              shadowOffsetY={10}
+              shadowOffsetY={12}
               shadowEnabled
+              listening={false}
+            />
+            {/* --- Plot edge depth (adds “cut into soil” feel) --- */}
+            <Rect
+              x={0}
+              y={0}
+              width={props.doc.canvas.width}
+              height={props.doc.canvas.height}
+              cornerRadius={26}
+              fillLinearGradientStartPoint={{ x: 0, y: 0 }}
+              fillLinearGradientEndPoint={{ x: 0, y: props.doc.canvas.height }}
+              fillLinearGradientColorStops={[
+                0, "rgba(0,0,0,0.12)",
+                0.08, "rgba(0,0,0,0.02)",
+                0.92, "rgba(0,0,0,0.04)",
+                1, "rgba(0,0,0,0.16)",
+              ]}
+              opacity={0.55}
+              listening={false}
+            />
+            
+
+            {/* --- Fine paper/soil grain --- */}
+            {noiseImg ? (
+              <Rect
+                x={0}
+                y={0}
+                width={props.doc.canvas.width}
+                height={props.doc.canvas.height}
+                fillPatternImage={noiseImg}
+                fillPatternRepeat="repeat"
+                fillPatternOffset={noiseOffset}
+                fillPatternScale={{ x: 1, y: 1 }}
+                opacity={0.10}
+                listening={false}
+              />
+            ) : null}
+
+
+            {/* --- Sparse “leaf shadow” speckles --- */}
+            {leafImg ? (
+              <Rect
+                x={0}
+                y={0}
+                width={props.doc.canvas.width}
+                height={props.doc.canvas.height}
+                fillPatternImage={leafImg}
+                fillPatternRepeat="repeat"
+                fillPatternOffset={leafOffset}
+                fillPatternScale={{ x: 1, y: 1 }}
+                opacity={0.12}
+                listening={false}
+              />
+            ) : null}
+            
+            {/* --- Soft vignette so the plot feels physical --- */}
+            <Rect
+              x={0}
+              y={0}
+              width={props.doc.canvas.width}
+              height={props.doc.canvas.height}
+              cornerRadius={26}
+              fillRadialGradientStartPoint={{
+                x: props.doc.canvas.width * 0.48,
+                y: props.doc.canvas.height * 0.42,
+              }}
+              fillRadialGradientEndPoint={{
+                x: props.doc.canvas.width * 0.48,
+                y: props.doc.canvas.height * 0.42,
+              }}
+              fillRadialGradientStartRadius={props.doc.canvas.width * 0.18}
+              fillRadialGradientEndRadius={props.doc.canvas.width * 0.92}
+              fillRadialGradientColorStops={[
+                0, "rgba(255,255,255,0.20)",
+                1, "rgba(255,255,255,0)",
+              ]}
+              opacity={0.28}
+              listening={false}
+            />
+
+            <Rect
+              x={0}
+              y={0}
+              width={props.doc.canvas.width}
+              height={props.doc.canvas.height}
+              cornerRadius={26}
+              fillLinearGradientStartPoint={{ x: 0, y: 0 }}
+              fillLinearGradientEndPoint={{ x: props.doc.canvas.width, y: props.doc.canvas.height }}
+              fillLinearGradientColorStops={[
+                0, "rgba(255,255,255,0.35)",
+                0.25, "rgba(255,255,255,0.06)",
+                1, "rgba(255,255,255,0)",
+              ]}
               listening={false}
             />
 
@@ -1283,26 +1557,54 @@ function ItemNode(props: {
           cornerRadius={Math.min(props.item.w, props.item.h) / 2}
           shadowColor={shadowColor}
           shadowBlur={shadow?.blur ?? 10}
+          shadowOpacity={0.35}
           shadowOffsetX={shadow?.offsetX ?? 0}
           shadowOffsetY={shadow?.offsetY ?? 10}
           shadowEnabled
         />
       ) : isRectLike(props.item) ? (
-        <Rect
-          ref={rectRef}
-          width={props.item.w}
-          height={props.item.h}
-          fill={fill}
-          stroke={isSelected ? "rgba(15,23,42,0.28)" : stroke}
-          strokeWidth={isSelected ? 1.4 : s.strokeWidth}
-          cornerRadius={rectCornerRadius}
-          shadowColor={shadowColor}
-          shadowBlur={shadow?.blur ?? 10}
-          shadowOffsetX={shadow?.offsetX ?? 0}
-          shadowOffsetY={shadow?.offsetY ?? 10}
-          shadowEnabled
-        />
+        <Group>
+          {/* Contact shadow / soil compression (AO) */}
+          <Rect
+            x={2.5}
+            y={3.5}
+            width={props.item.w - 5}
+            height={props.item.h - 5}
+            cornerRadius={rectCornerRadius}
+            fill="rgba(0,0,0,0.22)"
+            opacity={0.18}
+            listening={false}
+          />
+
+          {/* Main bed */}
+          <Rect
+            ref={rectRef}
+            width={props.item.w}
+            height={props.item.h}
+            fill={fill}
+            stroke={isSelected ? "rgba(15,23,42,0.28)" : stroke}
+            strokeWidth={isSelected ? 1.4 : s.strokeWidth}
+            cornerRadius={rectCornerRadius}
+            shadowColor={shadowColor}
+            shadowBlur={shadow?.blur ?? 10}
+            shadowOpacity={0.32}
+            shadowOffsetX={shadow?.offsetX ?? 0}
+            shadowOffsetY={shadow?.offsetY ?? 10}
+            shadowEnabled
+          />
+
+          {/* Sun rim highlight (gives “thickness”) */}
+          <Rect
+            width={props.item.w}
+            height={props.item.h}
+            cornerRadius={rectCornerRadius}
+            stroke="rgba(255,255,255,0.30)"
+            strokeWidth={1.6}
+            listening={false}
+          />
+        </Group>
       ) : (
+
         <Ellipse
           x={props.item.w / 2}
           y={props.item.h / 2}
@@ -1973,7 +2275,7 @@ function CornerSmartHandlesPro(props: {
             shadowBlur={10}
             shadowOffsetX={0}
             shadowOffsetY={6}
-            hitStrokeWidth={rotateRing * 2}
+            hitStrokeWidth={hitStroke}
             onMouseMove={() => {
               if (dragRef.current) return;
               const local = pointerToLocal();
@@ -2374,7 +2676,7 @@ function BezierEditorOverlay(props: {
         <Line
           points={[P.x, P.y, Hin.x, Hin.y]}
           stroke="rgba(255,255,255,0.55)"
-          strokeWidth={2}
+          strokeWidth={1}
           listening={false}
         />
       ) : null}
@@ -2382,7 +2684,7 @@ function BezierEditorOverlay(props: {
         <Line
           points={[P.x, P.y, Hout.x, Hout.y]}
           stroke="rgba(255,255,255,0.55)"
-          strokeWidth={2}
+          strokeWidth={1}
           listening={false}
         />
       ) : null}
