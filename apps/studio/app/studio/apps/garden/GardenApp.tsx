@@ -4,7 +4,7 @@ import GardenModule from "../../modules/garden/module";
 import { useWorkspaceStore } from "../../editor-core/useWorkspaceStore";
 import type { PortalContext } from "../../../lib/portal/getPortalContext";
 import GardenSheets from "./GardenSheets";
-import StudioShellInner from "../../editor-core/StudioShellInner";
+import StudioShell from "../../editor-core/shell";
 
 export type GardenView = "sheets" | "designer";
 
@@ -30,12 +30,7 @@ export default function GardenApp({
           onGoDesign={() => onViewChange("designer")}
         />
       ) : (
-        <StudioShellInner
-          module={GardenModule}
-          store={store}
-          portal={portal}
-          onBack={onBack}
-        />
+        <StudioShell module={GardenModule} store={store} portal={portal} onBack={onBack} />
       )}
     </div>
   );

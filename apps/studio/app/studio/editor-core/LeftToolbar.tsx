@@ -1,81 +1,105 @@
 "use client";
 
-import type { ItemStyle, StudioModule, ItemType, Swatch } from "./types";
+import type { StudioModule, ItemType } from "./types";
 
 export default function LeftToolbar(props: {
   module: StudioModule;
   tool: ItemType;
   setTool: (t: ItemType) => void;
 
-  // ✅ NEW: design defaults + optional apply-to-selection
-  bedDefaultStyle?: ItemStyle;
-  onSetBedDefaultStyle?: (patch: Partial<ItemStyle>) => void;
+  // ✅ Quick actions
+  canDuplicate: boolean;
+  canLock: boolean;
+  canDelete: boolean;
+  isLockedSelection: boolean;
+  onDuplicate: () => void;
+  onToggleLock: () => void;
+  onDelete: () => void;
 
-  selectedCount?: number;
-  onApplyStyleToSelected?: (patch: Partial<ItemStyle>) => void;
+  // ✅ Snap / Grid
+  showGrid: boolean;
+  setShowGrid: (v: boolean) => void;
+  snapToGrid: boolean;
+  setSnapToGrid: (v: boolean) => void;
+
+  // ✅ Layers / Order
+  canReorder: boolean;
+  onBringForward: () => void;
+  onSendBackward: () => void;
+  onBringToFront: () => void;
+  onSendToBack: () => void;
 }) {
-  const swatches = props.module.swatches;
-  const bedStyle = props.bedDefaultStyle;
-
   return (
     <aside className="border-r border-black/10 bg-white/60 p-4">
       <div className="text-xs text-black/55">
         Double-click to drop · Scroll to zoom · Hold space to pan · Cmd/Ctrl+C/V/D
       </div>
 
-      {/* ✅ Garden Design (always visible) */}
-      <div className="mt-5 rounded-2xl border border-black/10 bg-white p-4 shadow-sm">
-        <div className="flex items-center justify-between">
-          <div className="text-xs font-semibold text-black/70">Garden Design</div>
-          {props.selectedCount && props.selectedCount > 0 ? (
-            <span className="text-[11px] text-black/45">{props.selectedCount} selected</span>
-          ) : null}
+      {/* ✅ Quick Actions */}
+      <Panel title="Quick actions">
+        <div className="grid grid-cols-3 gap-2">
+          <SmallButton disabled={!props.canDuplicate} onClick={props.onDuplicate}>
+            Duplicate
+          </SmallButton>
+
+          <SmallButton disabled={!props.canLock} onClick={props.onToggleLock}>
+            {props.isLockedSelection ? "Unlock" : "Lock"}
+          </SmallButton>
+
+          <SmallButton danger disabled={!props.canDelete} onClick={props.onDelete}>
+            Delete
+          </SmallButton>
         </div>
+      </Panel>
 
-        <div className="mt-3">
-          <div className="text-[11px] text-black/55">Bed fill (default)</div>
-
-          <div className="mt-2 flex flex-wrap gap-2">
-            {swatches.map((s) => (
-              <SwatchChip
-                key={s.name}
-                swatch={s}
-                active={!!bedStyle && normalizeHex(bedStyle.fill) === normalizeHex(s.value)}
-                onClick={() => props.onSetBedDefaultStyle?.({ fill: s.value })}
-                title={`Set default bed fill: ${s.name}`}
-              />
-            ))}
-          </div>
-
-          {props.selectedCount && props.selectedCount > 0 ? (
-            <div className="mt-3 flex gap-2">
-              <button
-                type="button"
-                className="flex-1 rounded-xl border border-black/10 bg-white/80 px-3 py-2 text-xs shadow-sm hover:bg-black/5"
-                onClick={() => {
-                  // apply current default to selection
-                  if (!bedStyle) return;
-                  props.onApplyStyleToSelected?.({ fill: bedStyle.fill });
-                }}
-              >
-                Apply default to selection
-              </button>
-            </div>
-          ) : null}
+      {/* ✅ Snap / Grid */}
+      <Panel title="Snap / Grid">
+        <ToggleRow
+          label="Show grid"
+          value={props.showGrid}
+          onChange={props.setShowGrid}
+        />
+        <ToggleRow
+          label="Snap to grid"
+          value={props.snapToGrid}
+          onChange={props.setSnapToGrid}
+        />
+        <div className="mt-2 text-[11px] text-black/45 leading-snug">
+          Snap applies when you move/resize items (it rounds x/y/w/h).
         </div>
-      </div>
+      </Panel>
 
-      {/* ✅ Tools (bed-only for now via module.tools) */}
-      <div className="mt-5 space-y-2">
-        {props.module.tools.map((t) => (
-          <ToolButton
-            key={t.id}
-            label={t.label}
-            active={props.tool === t.id}
-            onClick={() => props.setTool(t.id)}
-          />
-        ))}
-      </div>
+      {/* ✅ Layers / Order */}
+      <Panel title="Layers / Order">
+        <div className="grid grid-cols-2 gap-2">
+          <SmallButton disabled={!props.canReorder} onClick={props.onBringForward}>
+            Bring forward
+          </SmallButton>
+          <SmallButton disabled={!props.canReorder} onClick={props.onSendBackward}>
+            Send backward
+          </SmallButton>
+          <SmallButton disabled={!props.canReorder} onClick={props.onBringToFront}>
+            To front
+          </SmallButton>
+          <SmallButton disabled={!props.canReorder} onClick={props.onSendToBack}>
+            To back
+          </SmallButton>
+        </div>
+      </Panel>
+
+      {/* ✅ Tools */}
+      <Panel title="Tools">
+        <div className="space-y-2">
+          {props.module.tools.map((t) => (
+            <ToolButton
+              key={t.id}
+              label={t.label}
+              active={props.tool === t.id}
+              onClick={() => props.setTool(t.id)}
+            />
+          ))}
+        </div>
+      </Panel>
 
       <div className="mt-6 rounded-2xl border border-black/10 bg-white p-4 shadow-sm">
         <div className="text-xs text-black/60">Tip</div>
@@ -87,58 +111,65 @@ export default function LeftToolbar(props: {
   );
 }
 
-function ToolButton({
-  label,
-  active,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}) {
+function Panel(props: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="mt-5 rounded-2xl border border-black/10 bg-white p-4 shadow-sm">
+      <div className="text-xs font-semibold text-black/70">{props.title}</div>
+      <div className="mt-3">{props.children}</div>
+    </div>
+  );
+}
+
+function ToolButton(props: { label: string; active: boolean; onClick: () => void }) {
   return (
     <button
-      onClick={onClick}
+      type="button"
+      onClick={props.onClick}
       className={`w-full rounded-2xl border px-4 py-3 text-left text-sm transition shadow-sm ${
-        active ? "border-black/15 bg-black/5" : "border-black/10 bg-white hover:bg-black/5"
+        props.active ? "border-black/15 bg-black/5" : "border-black/10 bg-white hover:bg-black/5"
       }`}
     >
-      {label}
+      {props.label}
     </button>
   );
 }
 
-function SwatchChip({
-  swatch,
-  active,
-  onClick,
-  title,
-}: {
-  swatch: Swatch;
-  active: boolean;
+function SmallButton(props: {
+  children: React.ReactNode;
   onClick: () => void;
-  title?: string;
+  disabled?: boolean;
+  danger?: boolean;
 }) {
   return (
     <button
       type="button"
-      title={title}
-      onClick={onClick}
-      className={`rounded-full border px-2 py-1 text-[11px] shadow-sm hover:bg-black/5 ${
-        active ? "border-black/20 bg-black/5" : "border-black/10 bg-white"
-      }`}
+      disabled={props.disabled}
+      onClick={props.onClick}
+      className={[
+        "rounded-xl border px-3 py-2 text-[12px] shadow-sm transition",
+        props.disabled ? "opacity-40 cursor-not-allowed" : "hover:bg-black/5",
+        props.danger ? "text-red-700 border-red-200 hover:bg-red-500/10" : "border-black/10 bg-white",
+      ].join(" ")}
     >
-      <span className="inline-flex items-center gap-2">
-        <span
-          className="h-4 w-4 rounded-full border border-black/10"
-          style={{ background: swatch.value }}
-        />
-        <span className="text-black/70">{swatch.name}</span>
-      </span>
+      {props.children}
     </button>
   );
 }
 
-function normalizeHex(v: string) {
-  return (v || "").trim().toLowerCase();
+function ToggleRow(props: {
+  label: string;
+  value: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <label className="flex items-center justify-between gap-3 py-2">
+      <span className="text-[12px] text-black/75">{props.label}</span>
+      <input
+        type="checkbox"
+        checked={props.value}
+        onChange={(e) => props.onChange(e.target.checked)}
+        className="h-4 w-4"
+      />
+    </label>
+  );
 }
