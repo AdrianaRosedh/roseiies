@@ -1,0 +1,53 @@
+// apps/studio/app/studio/editor-core/canvas/utils/geometry/curvature.ts
+import type { CurvaturePath } from "../../../types";
+import { clamp, uid } from "../math";
+
+export function catmullRomToBezierSegments(
+  pts: { x: number; y: number; corner?: boolean }[],
+  closed: boolean,
+  tension: number
+) {
+  const n = pts.length;
+  if (n < 2) return [];
+
+  const get = (i: number) => {
+    if (closed) return pts[(i + n) % n];
+    return pts[Math.max(0, Math.min(n - 1, i))];
+  };
+
+  const t = clamp(tension, 0, 2);
+  const k = t / 6;
+
+  const segs: { p1: any; c1: any; c2: any; p2: any }[] = [];
+  const last = closed ? n : n - 1;
+
+  for (let i = 0; i < last; i++) {
+    const P0 = get(i - 1);
+    const P1 = get(i);
+    const P2 = get(i + 1);
+    const P3 = get(i + 2);
+
+    let C1 = { x: P1.x + (P2.x - P0.x) * k, y: P1.y + (P2.y - P0.y) * k };
+    let C2 = { x: P2.x - (P3.x - P1.x) * k, y: P2.y - (P3.y - P1.y) * k };
+
+    if (P1.corner) C1 = { x: P1.x, y: P1.y };
+    if (P2.corner) C2 = { x: P2.x, y: P2.y };
+
+    segs.push({ p1: P1, c1: C1, c2: C2, p2: P2 });
+  }
+
+  return segs;
+}
+
+export function rectToCurvature(closed: boolean = true): CurvaturePath {
+  return {
+    closed,
+    tension: 1,
+    points: [
+      { id: uid("c"), x: 0.1, y: 0.05 },
+      { id: uid("c"), x: 0.9, y: 0.05 },
+      { id: uid("c"), x: 0.95, y: 0.9 },
+      { id: uid("c"), x: 0.05, y: 0.9 },
+    ],
+  };
+}

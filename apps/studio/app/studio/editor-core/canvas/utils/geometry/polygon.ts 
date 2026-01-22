@@ -1,0 +1,15 @@
+// apps/studio/app/studio/editor-core/canvas/utils/geometry/polygon.ts
+import type { PolygonPath } from "../../../types";
+import { uid } from "../math";
+
+export function rectToPolygon(): PolygonPath {
+  return {
+    closed: true,
+    points: [
+      { id: uid("pt"), x: 0, y: 0 },
+      { id: uid("pt"), x: 1, y: 0 },
+      { id: uid("pt"), x: 1, y: 1 },
+      { id: uid("pt"), x: 0, y: 1 },
+    ],
+  };
+}

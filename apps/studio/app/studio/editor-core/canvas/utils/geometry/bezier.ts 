@@ -1,0 +1,66 @@
+// apps/studio/app/studio/editor-core/canvas/utils/geometry/bezier.ts
+import type { BezierPath, BezierPoint } from "../../../types";
+import type { StudioItem } from "../../../types";
+import { clamp, uid } from "../math";
+
+export function roundedRectToBezierPath(item: StudioItem): BezierPath {
+  const w = Math.max(1, item.w);
+  const h = Math.max(1, item.h);
+  const r = clamp(item.style?.radius ?? 0, 0, Math.min(w, h) / 2);
+
+  if (r < 0.5) {
+    return {
+      closed: true,
+      points: [
+        { id: uid("p"), x: 0, y: 0 },
+        { id: uid("p"), x: 1, y: 0 },
+        { id: uid("p"), x: 1, y: 1 },
+        { id: uid("p"), x: 0, y: 1 },
+      ],
+    };
+  }
+
+  const k = 0.5522847498;
+  const rx = r / w;
+  const ry = r / h;
+  const kx = (r * k) / w;
+  const ky = (r * k) / h;
+
+  const TL: BezierPoint = {
+    id: uid("p"),
+    x: rx,
+    y: 0,
+    in: { x: clamp(rx - kx, 0, 1), y: 0 },
+    out: { x: clamp(rx + kx, 0, 1), y: 0 },
+  };
+  const TR: BezierPoint = {
+    id: uid("p"),
+    x: 1 - rx,
+    y: 0,
+    in: { x: clamp(1 - rx - kx, 0, 1), y: 0 },
+    out: { x: 1, y: clamp(ry - ky, 0, 1) },
+  };
+  const BR: BezierPoint = {
+    id: uid("p"),
+    x: 1,
+    y: 1 - ry,
+    in: { x: 1, y: clamp(1 - ry + ky, 0, 1) },
+    out: { x: clamp(1 - rx + kx, 0, 1), y: 1 },
+  };
+  const BL: BezierPoint = {
+    id: uid("p"),
+    x: rx,
+    y: 1,
+    in: { x: clamp(rx - kx, 0, 1), y: 1 },
+    out: { x: 0, y: clamp(1 - ry + ky, 0, 1) },
+  };
+
+  return { closed: true, points: [TL, TR, BR, BL] };
+}
+
+export function bezierToLocal(point: { x: number; y: number }, w: number, h: number) {
+  return { x: point.x * w, y: point.y * h };
+}
+export function localToBezier(point: { x: number; y: number }, w: number, h: number) {
+  return { x: clamp(point.x / w, 0, 1), y: clamp(point.y / h, 0, 1) };
+}

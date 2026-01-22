@@ -1,0 +1,35 @@
+// apps/studio/app/studio/editor-core/canvas/utils/cursor.ts
+export function cursorSvgDataUri(svg: string) {
+  const encoded = encodeURIComponent(svg).replace(/'/g, "%27").replace(/"/g, "%22");
+  return `url("data:image/svg+xml,${encoded}")`;
+}
+
+// 32x32 cursor, hotspot at center (16,16)
+export const ROTATE_CURSOR =
+  cursorSvgDataUri(`
+  <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32">
+    <g fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M16 6a10 10 0 1 1-7.1 2.9"/>
+      <path d="M8.9 8.9L8 4.5l4.4.9"/>
+    </g>
+    <g fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.95">
+      <path d="M16 6a10 10 0 1 1-7.1 2.9"/>
+      <path d="M8.9 8.9L8 4.5l4.4.9"/>
+    </g>
+  </svg>
+`) + " 16 16, auto";
+
+/** Keep delta in [-180, 180] to prevent wrap jumps */
+export function normalizeAngleDelta(delta: number) {
+  let d = delta;
+  while (d > 180) d -= 360;
+  while (d < -180) d += 360;
+  return d;
+}
+
+export function rotateVec(v: { x: number; y: number }, deg: number) {
+  const a = (deg * Math.PI) / 180;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  return { x: v.x * c - v.y * s, y: v.x * s + v.y * c };
+}

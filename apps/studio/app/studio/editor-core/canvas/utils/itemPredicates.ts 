@@ -1,0 +1,21 @@
+// apps/studio/app/studio/editor-core/canvas/utils/itemPredicates.ts
+import type { StudioItem } from "../../editor-core/types";
+
+export function isPillLike(item: StudioItem) {
+  return item.type === "path" || item.type === "label";
+}
+export function isRectLike(item: StudioItem) {
+  return item.type === "bed" || item.type === "zone" || item.type === "structure";
+}
+export function isTree(item: StudioItem) {
+  return item.type === "tree";
+}
+export function hasBezier(item: StudioItem) {
+  return Boolean(item.meta?.bezier?.points?.length);
+}
+export function hasCurvature(item: StudioItem) {
+  return Boolean(item.meta?.curvature?.points?.length);
+}
+export function hasPolygon(item: StudioItem) {
+  return Boolean(item.meta?.polygon?.points?.length);
+}

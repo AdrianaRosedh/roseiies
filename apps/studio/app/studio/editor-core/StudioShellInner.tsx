@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { StudioModule } from "./types";
+import type { LayoutDoc, StudioModule } from "./types";
 import type { PortalContext } from "../../lib/portal/getPortalContext";
 import TopBar from "./TopBar";
 import LeftToolbar from "./LeftToolbar";
 import Inspector from "./Inspector";
-import CanvasStage from "./CanvasStage";
+import CanvasStage from "./canvas";
 
 type MobileSheetKind = "context" | "tools" | "inspector" | "more" | null;
 
@@ -167,7 +167,7 @@ export default function StudioShellInner({
             setStagePos={store.setStagePos}
             onAddItemAtWorld={store.addItemAtWorld}
             onUpdateItem={store.updateItem}
-            onUpdateCanvas={(patch) =>
+            onUpdateCanvas={(patch: Partial<LayoutDoc["canvas"]>) =>
               store.updateLayoutDoc({
                 canvas: { ...doc.canvas, ...patch },
               })
@@ -234,7 +234,7 @@ export default function StudioShellInner({
           setStagePos={store.setStagePos}
           onAddItemAtWorld={store.addItemAtWorld}
           onUpdateItem={store.updateItem}
-          onUpdateCanvas={(patch) =>
+          onUpdateCanvas={(patch: Partial<LayoutDoc["canvas"]>) =>
             store.updateLayoutDoc({
               canvas: { ...doc.canvas, ...patch },
             })
