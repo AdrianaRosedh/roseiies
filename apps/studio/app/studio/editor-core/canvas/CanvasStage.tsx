@@ -1,12 +1,13 @@
+// apps/studio/app/studio/editor-core/canvas/CanvasStage.tsx
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Layer, Stage, Transformer } from "react-konva";
+import { Layer, Stage, Transformer, Line } from "react-konva";
 import type Konva from "konva";
 
 import type { LayoutDoc, StudioItem, StudioModule, ItemType } from "../types";
 
-// hooks (should be default exports)
+// hooks
 import useStageSize from "./hooks/useStageSize";
 import useIsCoarsePointer from "./hooks/useIsCoarsePointer";
 import { useSelectionUIBox } from "./hooks/useSelectionUIBox";
@@ -78,13 +79,16 @@ export default function CanvasStage(props: {
   onCopySelected: () => void;
   onPasteAtCursor: () => void;
   onDeleteSelected: () => void;
+
+  // ✅ shell-controlled
+  showGrid?: boolean;
+
+  // ✅ snap guides
+  snapToGrid?: boolean;
+  snapStep?: number;
+  cursorWorld?: { x: number; y: number } | null;
 }) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
-  const cursorRef = useRef<string>("default");
-  const setWrapCursor = useCallback((cursor: string) => {
-    cursorRef.current = cursor;
-    if (wrapRef.current) wrapRef.current.style.cursor = cursor;
-  }, []);
   const stageRef = useRef<Konva.Stage>(null);
   const trRef = useRef<Konva.Transformer>(null);
   const nodeMapRef = useRef<Map<string, Konva.Node>>(new Map());
@@ -123,11 +127,9 @@ export default function CanvasStage(props: {
   const anyLocked = selectedItems.some((it) => Boolean(it.meta?.locked));
   const isSingleTree = single ? isTree(single) : false;
 
-  // assets
   const treeImages = useTreeImages();
   const textures = useTextures({ stagePos: props.stagePos });
 
-  // selection UI + transformer sync
   const selectionUI = useSelectionUIBox({
     wrapRef,
     stageRef,
@@ -139,11 +141,16 @@ export default function CanvasStage(props: {
     stageScale: props.stageScale,
   });
 
-  // world conversion
+  const cursorRef = useRef<string>("default");
+  const setWrapCursor = useCallback((cursor: string) => {
+    cursorRef.current = cursor;
+    if (wrapRef.current) wrapRef.current.style.cursor = cursor;
+  }, []);
+
   const worldFromScreen = useCallback(
-    (pointer: { x: number; y: number }) => ({
-      x: (pointer.x - props.stagePos.x) / props.stageScale,
-      y: (pointer.y - props.stagePos.y) / props.stageScale,
+    (p: { x: number; y: number }) => ({
+      x: (p.x - props.stagePos.x) / props.stageScale,
+      y: (p.y - props.stagePos.y) / props.stageScale,
     }),
     [props.stagePos.x, props.stagePos.y, props.stageScale]
   );
@@ -154,28 +161,22 @@ export default function CanvasStage(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stageSize.w, stageSize.h, props.stagePos.x, props.stagePos.y, props.stageScale]);
 
-  // pan + zoom
   const pan = usePan({
-      stageRef,
-      panMode: props.panMode,
-      stagePos: props.stagePos,
-      setStagePos: props.setStagePos,
-
-      stageScale: props.stageScale,
-
-      setSelectedIds: props.setSelectedIds,
-      setToolbarBox: selectionUI.setToolbarBox, // MUST exist (see note below)
-
-      setWrapCursor,
-      cursorRef,
-
-      setCursorWorld: props.setCursorWorld,
-      updateSelectionUIRaf: selectionUI.updateSelectionUIRaf,
-
-      worldFromScreen,
-      onAddItemAtWorld: props.onAddItemAtWorld,
-      tool: props.tool,
-    });    
+    stageRef,
+    panMode: props.panMode,
+    stagePos: props.stagePos,
+    setStagePos: props.setStagePos,
+    stageScale: props.stageScale,
+    setSelectedIds: props.setSelectedIds,
+    setToolbarBox: selectionUI.setToolbarBox,
+    setWrapCursor,
+    cursorRef,
+    setCursorWorld: props.setCursorWorld,
+    updateSelectionUIRaf: selectionUI.updateSelectionUIRaf,
+    worldFromScreen,
+    onAddItemAtWorld: props.onAddItemAtWorld,
+    tool: props.tool,
+  });
 
   const zoom = useZoom({
     stageRef,
@@ -186,11 +187,9 @@ export default function CanvasStage(props: {
     updateSelectionUIRaf: selectionUI.updateSelectionUIRaf,
   });
 
-  // reset edit mode + toolbar offset on selection change
   useEffect(() => setEditMode("none"), [props.selectedIds.join("|")]);
   useEffect(() => setToolbarOffset(null), [props.selectedIds.join("|")]);
 
-  // plot resize commit
   const clampItemsToPlot = useCallback(
     (nextW: number, nextH: number) => {
       const margin = 10;
@@ -216,7 +215,7 @@ export default function CanvasStage(props: {
     [clampItemsToPlot, props.onUpdateCanvas]
   );
 
-  // toolbar actions
+  // Toolbar actions (kept minimal here; shell has the main command set)
   const duplicateSelected = useCallback(() => {
     props.onCopySelected();
     props.onPasteAtCursor();
@@ -317,6 +316,15 @@ export default function CanvasStage(props: {
   const canConvert = Boolean(single) && !anyLocked && !isSingleTree;
   const canEdit = Boolean(single) && !anyLocked && !isSingleTree;
 
+  // ✅ Snap preview guides (ghost lines) — based on cursorWorld + snapStep
+  const snapStep = props.snapStep ?? 20;
+  const showSnapGuides = Boolean(props.snapToGrid) && Boolean(props.cursorWorld);
+  const snapped = useMemo(() => {
+    if (!showSnapGuides || !props.cursorWorld) return null;
+    const round = (v: number) => Math.round(v / snapStep) * snapStep;
+    return { x: round(props.cursorWorld.x), y: round(props.cursorWorld.y) };
+  }, [showSnapGuides, props.cursorWorld, snapStep]);
+
   return (
     <section
       ref={wrapRef}
@@ -402,11 +410,31 @@ export default function CanvasStage(props: {
               noiseOffset={textures.noiseOffset}
               leafImg={textures.leafImg}
               leafOffset={textures.leafOffset}
-              soilImg={textures.soilImg} 
+              soilImg={textures.soilImg}
             />
 
-            {/* ✅ Grid component computes visibility & lines internally */}
-            <Grid plotW={plotW} plotH={plotH} stageScale={props.stageScale} />
+            {/* ✅ grid is shell-controlled */}
+            {props.showGrid !== false ? (
+              <Grid plotW={plotW} plotH={plotH} stageScale={props.stageScale} />
+            ) : null}
+
+            {/* ✅ snap preview guides */}
+            {snapped ? (
+              <>
+                <Line
+                  points={[snapped.x, 0, snapped.x, plotH]}
+                  stroke="rgba(111, 102, 255, 0.22)"
+                  strokeWidth={1}
+                  listening={false}
+                />
+                <Line
+                  points={[0, snapped.y, plotW, snapped.y]}
+                  stroke="rgba(111, 102, 255, 0.22)"
+                  strokeWidth={1}
+                  listening={false}
+                />
+              </>
+            ) : null}
 
             {itemsSorted.map((item) => (
               <ItemNode

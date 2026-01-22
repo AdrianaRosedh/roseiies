@@ -3,8 +3,8 @@
 import LeftToolbar from "../LeftToolbar";
 import Inspector from "../Inspector";
 import CanvasStage from "../canvas";
-import PanelHeader from "./rails/PanelHeader";
-import CollapsedRail from "./rails/CollapsedRail";
+import PanelHeader from "./desktop/PanelHeader";
+import CollapsedRail from "./desktop/CollapsedRail";
 
 export default function DesktopShell(props: {
   leftOpen: boolean;

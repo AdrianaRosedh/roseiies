@@ -1,6 +1,7 @@
+// apps/studio/app/studio/editor-core/shell/StudioShell.tsx
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { LayoutDoc, StudioModule } from "../types";
 import type { PortalContext } from "../../../lib/portal/getPortalContext";
 
@@ -12,8 +13,8 @@ import CanvasStage from "../canvas";
 import MobileShell from "./MobileShell";
 import type { MobileSheetKind } from "./types";
 
-import PanelHeader from "./rails/PanelHeader";
-import CollapsedRail from "./rails/CollapsedRail";
+import PanelHeader from "./desktop/PanelHeader";
+import CollapsedRail from "./desktop/CollapsedRail";
 
 export default function StudioShell(props: {
   module: StudioModule;
@@ -23,21 +24,45 @@ export default function StudioShell(props: {
 }) {
   const { module, store, portal, onBack } = props;
 
+  // ✅ HARD lock page scroll for canvas apps (prevents “slide down”)
+  useEffect(() => {
+    const html = document.documentElement;
+    const body = document.body;
+
+    const prevHtmlOverflow = html.style.overflow;
+    const prevBodyOverflow = body.style.overflow;
+    const prevBodyHeight = body.style.height;
+
+    html.style.overflow = "hidden";
+    body.style.overflow = "hidden";
+    body.style.height = "100%";
+
+    return () => {
+      html.style.overflow = prevHtmlOverflow;
+      body.style.overflow = prevBodyOverflow;
+      body.style.height = prevBodyHeight;
+    };
+  }, []);
+
+  // Desktop rails
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
 
-  // ✅ Canvas toggles
+  // Canvas toggles
   const [showGrid, setShowGrid] = useState(true);
   const [snapToGrid, setSnapToGrid] = useState(false);
   const SNAP_STEP = 20;
 
-  // Mobile
+  // Mobile sheets
   const [mobileSheet, setMobileSheet] = useState<MobileSheetKind>(null);
   const toggleSheet = (k: Exclude<MobileSheetKind, null>) =>
     setMobileSheet((v) => (v === k ? null : k));
 
+  // Context (garden/layout)
   const activeGarden = useMemo(
-    () => store.state.gardens.find((g: any) => g.id === store.state.activeGardenId) ?? null,
+    () =>
+      store.state.gardens.find((g: any) => g.id === store.state.activeGardenId) ??
+      null,
     [store.state]
   );
 
@@ -49,7 +74,9 @@ export default function StudioShell(props: {
   }, [store.state]);
 
   const activeLayout = useMemo(
-    () => store.state.layouts.find((l: any) => l.id === store.state.activeLayoutId) ?? null,
+    () =>
+      store.state.layouts.find((l: any) => l.id === store.state.activeLayoutId) ??
+      null,
     [store.state]
   );
 
@@ -59,18 +86,12 @@ export default function StudioShell(props: {
     return store.state.docs[id] ?? store.emptyDoc();
   }, [store.state.activeLayoutId, store.state.docs]);
 
-  const LEFT_OPEN_W = 280;
-  const RIGHT_OPEN_W = 380;
-  const RAIL_W = 22;
-
-  const leftW = leftOpen ? LEFT_OPEN_W : RAIL_W;
-  const rightW = rightOpen ? RIGHT_OPEN_W : RAIL_W;
-
+  // Capabilities
   const canCopy = store.selectedIds.length > 0;
   const canPaste = !!store.clipboard;
   const canDelete = store.selectedIds.length > 0;
 
-  // selection helpers
+  // Selection helpers
   const selectedItems = store.selectedItems ?? [];
   const anyLocked = selectedItems.some((it: any) => Boolean(it?.meta?.locked));
 
@@ -92,19 +113,21 @@ export default function StudioShell(props: {
     });
   }
 
-  // order helpers
+  // Layers / order helpers
   function bringForward() {
     if (!selectedItems.length) return;
     selectedItems.forEach((it: any) =>
       store.updateItem?.(it.id, { order: (it.order ?? 0) + 1 })
     );
   }
+
   function sendBackward() {
     if (!selectedItems.length) return;
     selectedItems.forEach((it: any) =>
       store.updateItem?.(it.id, { order: (it.order ?? 0) - 1 })
     );
   }
+
   function bringToFront() {
     if (!selectedItems.length) return;
     const maxOrder = (doc.items ?? []).reduce(
@@ -118,6 +141,7 @@ export default function StudioShell(props: {
       store.updateItem?.(it.id, { order: maxOrder + 1 + idx })
     );
   }
+
   function sendToBack() {
     if (!selectedItems.length) return;
     const minOrder = (doc.items ?? []).reduce(
@@ -132,7 +156,35 @@ export default function StudioShell(props: {
     );
   }
 
-  // snap wrapper (canvas commits)
+  // ✅ Keyboard shortcuts for layers:
+  // ⌘] bring forward
+  // ⌘[ send backward
+  // ⌘⇧] to front
+  // ⌘⇧[ to back
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod) return;
+
+      if (e.key === "]") {
+        e.preventDefault();
+        if (e.shiftKey) bringToFront();
+        else bringForward();
+      }
+
+      if (e.key === "[") {
+        e.preventDefault();
+        if (e.shiftKey) sendToBack();
+        else sendBackward();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedItems, doc.items]);
+
+  // Snap wrapper for canvas commits
   function updateItemSnapped(id: string, patch: any) {
     if (!snapToGrid) return store.updateItem?.(id, patch);
 
@@ -147,6 +199,7 @@ export default function StudioShell(props: {
     return store.updateItem?.(id, next);
   }
 
+  // Shared canvasProps (desktop + mobile)
   const canvasProps = {
     module,
     doc,
@@ -170,8 +223,15 @@ export default function StudioShell(props: {
     showGrid,
   };
 
+  const LEFT_OPEN_W = 280;
+  const RIGHT_OPEN_W = 380;
+  const RAIL_W = 22;
+  const leftW = leftOpen ? LEFT_OPEN_W : RAIL_W;
+  const rightW = rightOpen ? RIGHT_OPEN_W : RAIL_W;
+
   return (
-    <div className="w-full">
+    // ✅ Viewport-locked canvas app shell
+    <div className="w-full h-dvh overflow-hidden flex flex-col">
       <TopBar
         module={module}
         state={store.state}
@@ -199,110 +259,138 @@ export default function StudioShell(props: {
         onOpenMobileContext={() => toggleSheet("context")}
       />
 
-      {/* Desktop */}
-      <div className="hidden md:flex gap-3 mt-3 min-h-[calc(100vh-56px-56px-28px)]">
-        <div className="shrink-0 transition-[width] duration-300 ease-out" style={{ width: leftW }}>
-          <div className="h-full rounded-2xl border border-black/10 bg-white/60 shadow-sm backdrop-blur overflow-hidden">
-            {leftOpen ? (
-              <div className="h-full p-3">
-                <PanelHeader title="Tools" side="left" onCollapse={() => setLeftOpen(false)} />
-                <div className="pt-2">
-                  <LeftToolbar
-                    module={module}
-                    tool={store.tool}
-                    setTool={(t: any) => {
-                      store.setTool(t);
-                      store.quickInsert(t);
-                    }}
-                    // Quick actions
-                    canDuplicate={canDuplicate}
-                    canLock={canLock}
-                    canDelete={canDeleteAction}
-                    isLockedSelection={anyLocked}
-                    onDuplicate={onDuplicate}
-                    onToggleLock={onToggleLock}
-                    onDelete={store.deleteSelected}
-                    // Snap/Grid
-                    showGrid={showGrid}
-                    setShowGrid={setShowGrid}
-                    snapToGrid={snapToGrid}
-                    setSnapToGrid={setSnapToGrid}
-                    // Layers
-                    canReorder={canReorder}
-                    onBringForward={bringForward}
-                    onSendBackward={sendBackward}
-                    onBringToFront={bringToFront}
-                    onSendToBack={sendToBack}
+      {/* Everything below TopBar must not scroll the page */}
+      <div className="flex-1 overflow-hidden">
+        {/* Desktop */}
+        <div className="hidden md:flex gap-3 mt-3 h-full overflow-hidden px-3 pb-3">
+          {/* LEFT */}
+          <div
+            className="shrink-0 transition-[width] duration-300 ease-out"
+            style={{ width: leftW }}
+          >
+            <div className="h-full rounded-2xl border border-black/10 bg-white/60 shadow-sm backdrop-blur overflow-hidden">
+              {leftOpen ? (
+                <div className="h-full p-3 overflow-hidden flex flex-col">
+                  <PanelHeader
+                    title="Tools"
+                    side="left"
+                    onCollapse={() => setLeftOpen(false)}
                   />
+                  <div className="pt-2 flex-1 overflow-auto">
+                    <LeftToolbar
+                      module={module}
+                      tool={store.tool}
+                      setTool={(t: any) => {
+                        store.setTool(t);
+                        store.quickInsert(t);
+                      }}
+                      // Quick actions
+                      canDuplicate={canDuplicate}
+                      canLock={canLock}
+                      canDelete={canDeleteAction}
+                      isLockedSelection={anyLocked}
+                      onDuplicate={onDuplicate}
+                      onToggleLock={onToggleLock}
+                      onDelete={store.deleteSelected}
+                      // Snap / Grid
+                      showGrid={showGrid}
+                      setShowGrid={setShowGrid}
+                      snapToGrid={snapToGrid}
+                      setSnapToGrid={setSnapToGrid}
+                      // Layers / Order
+                      canReorder={canReorder}
+                      onBringForward={bringForward}
+                      onSendBackward={sendBackward}
+                      onBringToFront={bringToFront}
+                      onSendToBack={sendToBack}
+                    />
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <CollapsedRail side="left" title="Tools" onExpand={() => setLeftOpen(true)} />
-            )}
+              ) : (
+                <CollapsedRail
+                  side="left"
+                  title="Tools"
+                  onExpand={() => setLeftOpen(true)}
+                />
+              )}
+            </div>
+          </div>
+
+          {/* CENTER */}
+          <div className="flex-1 rounded-2xl border border-black/10 bg-white/40 shadow-sm overflow-hidden relative">
+            <CanvasStage {...canvasProps} />
+          </div>
+
+          {/* RIGHT */}
+          <div
+            className="shrink-0 transition-[width] duration-300 ease-out"
+            style={{ width: rightW }}
+          >
+            <div className="h-full rounded-2xl border border-black/10 bg-white/60 shadow-sm backdrop-blur overflow-hidden">
+              {rightOpen ? (
+                <div className="h-full p-3 overflow-hidden flex flex-col">
+                  <PanelHeader
+                    title="Inspector"
+                    side="right"
+                    onCollapse={() => setRightOpen(false)}
+                  />
+                  <div className="pt-2 flex-1 overflow-auto">
+                    <Inspector
+                      module={module}
+                      selectedIds={store.selectedIds}
+                      selected={store.selected}
+                      selectedItems={store.selectedItems}
+                      onUpdateItem={store.updateItem}
+                      onUpdateMeta={store.updateMeta}
+                      onUpdateStyle={store.updateStyle}
+                      onAddPlant={store.addPlantToBed}
+                      onUpdatePlant={store.updatePlant}
+                      onRemovePlant={store.removePlant}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <CollapsedRail
+                  side="right"
+                  title="Inspector"
+                  onExpand={() => setRightOpen(true)}
+                />
+              )}
+            </div>
           </div>
         </div>
 
-        <div className="flex-1 rounded-2xl border border-black/10 bg-white/40 shadow-sm overflow-hidden relative">
-          <CanvasStage {...canvasProps} />
-        </div>
-
-        <div className="shrink-0 transition-[width] duration-300 ease-out" style={{ width: rightW }}>
-          <div className="h-full rounded-2xl border border-black/10 bg-white/60 shadow-sm backdrop-blur overflow-hidden">
-            {rightOpen ? (
-              <div className="h-full p-3">
-                <PanelHeader title="Inspector" side="right" onCollapse={() => setRightOpen(false)} />
-                <div className="pt-2 h-[calc(100%-40px)] overflow-auto">
-                  <Inspector
-                    module={module}
-                    selectedIds={store.selectedIds}
-                    selected={store.selected}
-                    selectedItems={store.selectedItems}
-                    onUpdateItem={store.updateItem}
-                    onUpdateMeta={store.updateMeta}
-                    onUpdateStyle={store.updateStyle}
-                    onAddPlant={store.addPlantToBed}
-                    onUpdatePlant={store.updatePlant}
-                    onRemovePlant={store.removePlant}
-                  />
-                </div>
-              </div>
-            ) : (
-              <CollapsedRail side="right" title="Inspector" onExpand={() => setRightOpen(true)} />
-            )}
-          </div>
-        </div>
+        {/* Mobile */}
+        <MobileShell
+          module={module}
+          store={store}
+          portal={portal}
+          mobileSheet={mobileSheet}
+          setMobileSheet={setMobileSheet}
+          toggleSheet={toggleSheet}
+          canvasProps={canvasProps}
+          activeGarden={activeGarden}
+          layoutsForGarden={layoutsForGarden}
+          activeLayout={activeLayout}
+          canCopy={canCopy}
+          canPaste={canPaste}
+          canDelete={canDelete}
+          canDuplicate={canDuplicate}
+          canLock={canLock}
+          isLockedSelection={anyLocked}
+          onDuplicate={onDuplicate}
+          onToggleLock={onToggleLock}
+          showGrid={showGrid}
+          setShowGrid={setShowGrid}
+          snapToGrid={snapToGrid}
+          setSnapToGrid={setSnapToGrid}
+          canReorder={canReorder}
+          onBringForward={bringForward}
+          onSendBackward={sendBackward}
+          onBringToFront={bringToFront}
+          onSendToBack={sendToBack}
+        />
       </div>
-
-      {/* Mobile (uses shell/mobile/*) */}
-      <MobileShell
-        module={module}
-        store={store}
-        portal={portal}
-        mobileSheet={mobileSheet}
-        setMobileSheet={setMobileSheet}
-        toggleSheet={toggleSheet}
-        canvasProps={canvasProps}
-        activeGarden={activeGarden}
-        layoutsForGarden={layoutsForGarden}
-        activeLayout={activeLayout}
-        canCopy={canCopy}
-        canPaste={canPaste}
-        canDelete={canDelete}
-        canDuplicate={canDuplicate}
-        canLock={canLock}
-        isLockedSelection={anyLocked}
-        onDuplicate={onDuplicate}
-        onToggleLock={onToggleLock}
-        showGrid={showGrid}
-        setShowGrid={setShowGrid}
-        snapToGrid={snapToGrid}
-        setSnapToGrid={setSnapToGrid}
-        canReorder={canReorder}
-        onBringForward={bringForward}
-        onSendBackward={sendBackward}
-        onBringToFront={bringToFront}
-        onSendToBack={sendToBack}
-      />
     </div>
   );
 }
