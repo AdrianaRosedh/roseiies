@@ -52,7 +52,8 @@ export default function StudioShellInner({
     const id = store.state.activeLayoutId;
     if (!id) return store.emptyDoc();
     return store.state.docs[id] ?? store.emptyDoc();
-  }, [store]);
+  }, [store.state.activeLayoutId, store.state.docs]);
+
 
   const LEFT_OPEN_W = 280;
   const RIGHT_OPEN_W = 380;
@@ -67,6 +68,14 @@ export default function StudioShellInner({
 
   const toggleSheet = (k: Exclude<MobileSheetKind, null>) =>
     setMobileSheet((v) => (v === k ? null : k));
+
+  // ✅ NEW: selection helpers for the Garden Design palette
+  const selectedCount = store.selectedIds.length;
+
+  function applyStyleToSelected(patch: any) {
+    if (!store?.selectedItems?.length) return;
+    store.selectedItems.forEach((it: any) => store.updateStyle?.(it.id, patch));
+  }
 
   return (
     <div className="w-full">
@@ -121,6 +130,15 @@ export default function StudioShellInner({
                       store.setTool(t);
                       store.quickInsert(t);
                     }}
+                    // ✅ Garden Design palette wiring
+                    bedDefaultStyle={store.stylesByType?.bed}
+                    onSetBedDefaultStyle={(patch: any) =>
+                      store.setDefaultStyle?.("bed", patch)
+                    }
+                    selectedCount={selectedCount}
+                    onApplyStyleToSelected={(patch: any) =>
+                      applyStyleToSelected(patch)
+                    }
                   />
                 </div>
               </div>
@@ -149,6 +167,11 @@ export default function StudioShellInner({
             setStagePos={store.setStagePos}
             onAddItemAtWorld={store.addItemAtWorld}
             onUpdateItem={store.updateItem}
+            onUpdateCanvas={(patch) =>
+              store.updateLayoutDoc({
+                canvas: { ...doc.canvas, ...patch },
+              })
+            }
             setCursorWorld={store.setCursorWorld}
             setViewportCenterWorld={store.setViewportCenterWorld}
             onCopySelected={store.copySelected}
@@ -211,6 +234,11 @@ export default function StudioShellInner({
           setStagePos={store.setStagePos}
           onAddItemAtWorld={store.addItemAtWorld}
           onUpdateItem={store.updateItem}
+          onUpdateCanvas={(patch) =>
+            store.updateLayoutDoc({
+              canvas: { ...doc.canvas, ...patch },
+            })
+          }
           setCursorWorld={store.setCursorWorld}
           setViewportCenterWorld={store.setViewportCenterWorld}
           onCopySelected={store.copySelected}
@@ -266,7 +294,10 @@ export default function StudioShellInner({
                   className="flex-1 rounded-xl border border-black/10 bg-white/80 px-3 py-3 text-sm disabled:opacity-40"
                   disabled={!activeGarden}
                   onClick={() => {
-                    const name = prompt("Rename garden:", activeGarden?.name ?? "");
+                    const name = prompt(
+                      "Rename garden:",
+                      activeGarden?.name ?? ""
+                    );
                     if (name?.trim()) store.renameGarden(name.trim());
                   }}
                 >
@@ -308,7 +339,10 @@ export default function StudioShellInner({
                   className="flex-1 rounded-xl border border-black/10 bg-white/80 px-3 py-3 text-sm disabled:opacity-40"
                   disabled={!activeLayout}
                   onClick={() => {
-                    const name = prompt("Rename layout:", activeLayout?.name ?? "");
+                    const name = prompt(
+                      "Rename layout:",
+                      activeLayout?.name ?? ""
+                    );
                     if (name?.trim()) store.renameLayout(name.trim());
                   }}
                 >
@@ -346,6 +380,13 @@ export default function StudioShellInner({
                 store.quickInsert(t);
                 setMobileSheet(null);
               }}
+              // ✅ Garden Design palette wiring
+              bedDefaultStyle={store.stylesByType?.bed}
+              onSetBedDefaultStyle={(patch: any) =>
+                store.setDefaultStyle?.("bed", patch)
+              }
+              selectedCount={selectedCount}
+              onApplyStyleToSelected={(patch: any) => applyStyleToSelected(patch)}
             />
           </div>
         </MobileSheet>

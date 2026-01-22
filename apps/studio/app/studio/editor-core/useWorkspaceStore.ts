@@ -21,6 +21,13 @@ function uid(prefix: string) {
   return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now()}`;
 }
 
+// ✅ Tree SVG variants live in apps/studio/public/images/trees/
+const TREE_VARIANTS = ["tree-01", "tree-02", "tree-03", "tree-04", "citrus"] as const;
+
+function pickTreeVariant() {
+  return TREE_VARIANTS[Math.floor(Math.random() * TREE_VARIANTS.length)];
+}
+
 function seedStore(module: StudioModule): WorkspaceStore {
   const g1 = { id: "olivea_garden_main", name: "Huerto Principal" };
   const l1 = {
@@ -300,29 +307,54 @@ export function useWorkspaceStore(
     const baseStyle = module.defaults.stylesByType[args.type];
     const maxOrder = doc.items.reduce((m, it) => Math.max(m, it.order ?? 0), 0);
 
-    const item: StudioItem = {
-      id: uid(args.type),
-      type: args.type,
-      x: args.x,
-      y: args.y,
-      w: args.type === "path" ? 240 : args.type === "label" ? 220 : 200,
-      h: args.type === "path" ? 28 : args.type === "label" ? 44 : 120,
-      r: 0,
-      order: maxOrder + 1,
-      label:
-        args.type === "bed"
-          ? "Bed"
+    const w =
+      args.type === "path" ? 240 :
+      args.type === "label" ? 220 :
+      args.type === "tree" ? 120 :
+      200;
+
+    const h =
+      args.type === "path" ? 28 :
+      args.type === "label" ? 44 :
+      args.type === "tree" ? 120 :
+      120;
+
+    const label =
+      args.type === "bed"
+        ? "Bed"
+        : args.type === "tree"
+          ? "Tree"
           : args.type === "zone"
             ? "Zone"
             : args.type === "path"
               ? "Path"
               : args.type === "structure"
                 ? "Structure"
-                : "Label",
+                : "Label";
+
+    const item: StudioItem = {
+      id: uid(args.type),
+      type: args.type,
+      x: args.x,
+      y: args.y,
+      w,
+      h,
+      r: 0,
+      order: maxOrder + 1,
+      label,
       meta: {
         status: args.type === "bed" ? "dormant" : undefined,
         public: args.type === "bed" ? false : undefined,
         plants: args.type === "bed" ? [] : undefined,
+
+        tree:
+          args.type === "tree"
+            ? {
+                species: "Tree",
+                canopyM: 3,
+                variant: pickTreeVariant(),
+              }
+            : undefined,
       },
       style: {
         ...baseStyle,

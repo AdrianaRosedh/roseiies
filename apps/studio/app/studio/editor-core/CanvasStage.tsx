@@ -1,3 +1,4 @@
+// apps/studio/app/studio/editor-core/CanvasStage.tsx
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -12,6 +13,7 @@ import {
   Circle,
   Ellipse,
   Shape,
+  Image as KonvaImage,
 } from "react-konva";
 import type Konva from "konva";
 import type {
@@ -29,32 +31,26 @@ import type {
   PolygonPoint,
 } from "./types";
 
+/* -------------------------------------------------------
+  Core goals of this cleanup
+  - Remove “glitchy” interaction conflicts:
+    ✅ background pan only when empty canvas OR panMode
+    ✅ items always clickable/drag-drawable (stop bubbling)
+    ✅ trees (KonvaImage) don't steal events (listening=false)
+  - Reduce render thrash:
+    ✅ no effects without deps that run every render
+    ✅ rAF throttles for selection UI + cursor world updates
+    ✅ draft editors commit from a ref (no stale props.path)
+  - Make transforms stable:
+    ✅ center-locked scaling (bake scale into w/h)
+    ✅ corner handles do not write to store during drag
+-------------------------------------------------------- */
+
 /* ---------------- Utils ---------------- */
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
-
-function cursorSvgDataUri(svg: string) {
-  const encoded = encodeURIComponent(svg)
-    .replace(/'/g, "%27")
-    .replace(/"/g, "%22");
-  return `url("data:image/svg+xml,${encoded}")`;
-}
-
-// 32x32 cursor, hotspot at center (16,16)
-const ROTATE_CURSOR = cursorSvgDataUri(`
-  <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32">
-    <g fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M16 6a10 10 0 1 1-7.1 2.9"/>
-      <path d="M8.9 8.9L8 4.5l4.4.9"/>
-    </g>
-    <g fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.95">
-      <path d="M16 6a10 10 0 1 1-7.1 2.9"/>
-      <path d="M8.9 8.9L8 4.5l4.4.9"/>
-    </g>
-  </svg>
-  `) + " 16 16, auto"; 
 
 function rgba(hex: string, opacity: number) {
   const h = hex.replace("#", "").trim();
@@ -69,15 +65,16 @@ function uid(prefix = "p") {
   return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`;
 }
 
-type ScreenBox =
-  | { left: number; top: number; width: number; height: number }
-  | null;
+type ScreenBox = { left: number; top: number; width: number; height: number } | null;
 
 function isPillLike(item: StudioItem) {
   return item.type === "path" || item.type === "label";
 }
 function isRectLike(item: StudioItem) {
   return item.type === "bed" || item.type === "zone" || item.type === "structure";
+}
+function isTree(item: StudioItem) {
+  return item.type === "tree";
 }
 function hasBezier(item: StudioItem) {
   return Boolean(item.meta?.bezier?.points?.length);
@@ -89,16 +86,32 @@ function hasPolygon(item: StudioItem) {
   return Boolean(item.meta?.polygon?.points?.length);
 }
 
+function cursorSvgDataUri(svg: string) {
+  const encoded = encodeURIComponent(svg).replace(/'/g, "%27").replace(/"/g, "%22");
+  return `url("data:image/svg+xml,${encoded}")`;
+}
+
+// 32x32 cursor, hotspot at center (16,16)
+const ROTATE_CURSOR =
+  cursorSvgDataUri(`
+  <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32">
+    <g fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M16 6a10 10 0 1 1-7.1 2.9"/>
+      <path d="M8.9 8.9L8 4.5l4.4.9"/>
+    </g>
+    <g fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.95">
+      <path d="M16 6a10 10 0 1 1-7.1 2.9"/>
+      <path d="M8.9 8.9L8 4.5l4.4.9"/>
+    </g>
+  </svg>
+`) + " 16 16, auto";
+
 /** Keep delta in [-180, 180] to prevent wrap jumps */
 function normalizeAngleDelta(delta: number) {
   let d = delta;
   while (d > 180) d -= 360;
   while (d < -180) d += 360;
   return d;
-}
-
-function angleDegWorld(p: { x: number; y: number }, c: { x: number; y: number }) {
-  return (Math.atan2(p.y - c.y, p.x - c.x) * 180) / Math.PI;
 }
 
 function rotateVec(v: { x: number; y: number }, deg: number) {
@@ -113,8 +126,8 @@ function rotateVec(v: { x: number; y: number }, deg: number) {
 function useRafThrottled<T extends (...args: any[]) => void>(fn: T) {
   const raf = useRef<number | null>(null);
   const lastArgs = useRef<any[] | null>(null);
-
   const fnRef = useRef(fn);
+
   useEffect(() => {
     fnRef.current = fn;
   }, [fn]);
@@ -139,7 +152,6 @@ function useIsCoarsePointer() {
     const update = () => setIsCoarse(Boolean(mq.matches));
 
     update();
-    // Safari uses addListener/removeListener in older versions
     if ("addEventListener" in mq) mq.addEventListener("change", update);
     else (mq as any).addListener(update);
 
@@ -159,7 +171,6 @@ function roundedRectToBezierPath(item: StudioItem): BezierPath {
   const h = Math.max(1, item.h);
   const r = clamp(item.style?.radius ?? 0, 0, Math.min(w, h) / 2);
 
-  // Rectangle: 4 anchors, no handles
   if (r < 0.5) {
     return {
       closed: true,
@@ -172,7 +183,7 @@ function roundedRectToBezierPath(item: StudioItem): BezierPath {
     };
   }
 
-  const k = 0.5522847498; // kappa approximation
+  const k = 0.5522847498;
   const rx = r / w;
   const ry = r / h;
   const kx = (r * k) / w;
@@ -185,7 +196,6 @@ function roundedRectToBezierPath(item: StudioItem): BezierPath {
     in: { x: clamp(rx - kx, 0, 1), y: 0 },
     out: { x: clamp(rx + kx, 0, 1), y: 0 },
   };
-
   const TR: BezierPoint = {
     id: uid("p"),
     x: 1 - rx,
@@ -193,7 +203,6 @@ function roundedRectToBezierPath(item: StudioItem): BezierPath {
     in: { x: clamp(1 - rx - kx, 0, 1), y: 0 },
     out: { x: 1, y: clamp(ry - ky, 0, 1) },
   };
-
   const BR: BezierPoint = {
     id: uid("p"),
     x: 1,
@@ -201,7 +210,6 @@ function roundedRectToBezierPath(item: StudioItem): BezierPath {
     in: { x: 1, y: clamp(1 - ry + ky, 0, 1) },
     out: { x: clamp(1 - rx + kx, 0, 1), y: 1 },
   };
-
   const BL: BezierPoint = {
     id: uid("p"),
     x: rx,
@@ -220,7 +228,7 @@ function localToBezier(point: { x: number; y: number }, w: number, h: number) {
   return { x: clamp(point.x / w, 0, 1), y: clamp(point.y / h, 0, 1) };
 }
 
-/* ---------------- Curvature helpers (Illustrator Curvature-ish) ---------------- */
+/* ---------------- Curvature helpers ---------------- */
 
 function catmullRomToBezierSegments(
   pts: { x: number; y: number; corner?: boolean }[],
@@ -250,7 +258,6 @@ function catmullRomToBezierSegments(
     let C1 = { x: P1.x + (P2.x - P0.x) * k, y: P1.y + (P2.y - P0.y) * k };
     let C2 = { x: P2.x - (P3.x - P1.x) * k, y: P2.y - (P3.y - P1.y) * k };
 
-    // Corners collapse tangents
     if (P1.corner) C1 = { x: P1.x, y: P1.y };
     if (P2.corner) C2 = { x: P2.x, y: P2.y };
 
@@ -273,8 +280,6 @@ function rectToPolygon(): PolygonPath {
 }
 
 function rectToCurvature(closed: boolean = true): CurvaturePath {
-  // A minimal “sleek” starting curve: 4 anchors around a rounded-ish rect.
-  // Users can add points later; this keeps it calm.
   return {
     closed,
     tension: 1,
@@ -287,6 +292,8 @@ function rectToCurvature(closed: boolean = true): CurvaturePath {
   };
 }
 
+/* ---------------- Textures (client-only) ---------------- */
+
 function makeNoiseCanvas(size = 240) {
   const c = document.createElement("canvas");
   c.width = size;
@@ -295,17 +302,15 @@ function makeNoiseCanvas(size = 240) {
   if (!ctx) return c;
 
   const img = ctx.createImageData(size, size);
-  // subtle monochrome noise (warm)
   for (let i = 0; i < img.data.length; i += 4) {
-    const v = 210 + Math.floor(Math.random() * 30); // 210..239
-    img.data[i + 0] = v; // r
-    img.data[i + 1] = v - 4; // g
-    img.data[i + 2] = v - 10; // b
+    const v = 210 + Math.floor(Math.random() * 30);
+    img.data[i + 0] = v;
+    img.data[i + 1] = v - 4;
+    img.data[i + 2] = v - 10;
     img.data[i + 3] = 255;
   }
   ctx.putImageData(img, 0, 0);
 
-  // add a few bigger “grain” dots
   ctx.globalAlpha = 0.06;
   for (let i = 0; i < 240; i++) {
     const x = Math.random() * size;
@@ -328,43 +333,34 @@ function makeLeafSpeckleCanvas(size = 420) {
   const ctx = c.getContext("2d");
   if (!ctx) return c;
 
-  // transparent base
   ctx.clearRect(0, 0, size, size);
 
-  // A muted, cinematic “canopy shadow” tone (not neon green)
   const SHADOW = "rgba(58, 86, 58, 1)";
   const VEIN = "rgba(40, 60, 40, 1)";
 
-  // ---- 1) Big soft leaf-shadow blobs ----
-  // fewer shapes, bigger, more natural
-  const blobCount = Math.round(size / 18); // ~23 at 420
+  const blobCount = Math.round(size / 18);
   for (let i = 0; i < blobCount; i++) {
     const x = Math.random() * size;
     const y = Math.random() * size;
 
-    const rx = 40 + Math.random() * 130;  // width
-    const ry = 25 + Math.random() * 95;   // height
+    const rx = 40 + Math.random() * 130;
+    const ry = 25 + Math.random() * 95;
     const rot = (Math.random() * 180) * (Math.PI / 180);
 
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(rot);
 
-    // faux blur by layering multiple ellipses
     for (let k = 0; k < 7; k++) {
-      ctx.globalAlpha = 0.018; // subtle
+      ctx.globalAlpha = 0.018;
       ctx.fillStyle = SHADOW;
-
       ctx.beginPath();
       ctx.ellipse(0, 0, rx + k * 7, ry + k * 7, 0, 0, Math.PI * 2);
       ctx.fill();
     }
-
     ctx.restore();
   }
 
-  // ---- 2) A few “leaf vein” streaks (adds realism) ----
-  // super subtle, just enough to read as organic shadow
   ctx.globalAlpha = 0.06;
   for (let i = 0; i < Math.round(size / 60); i++) {
     const x = Math.random() * size;
@@ -378,21 +374,62 @@ function makeLeafSpeckleCanvas(size = 420) {
     ctx.translate(x, y);
     ctx.rotate(rot);
 
-    // draw as a slightly feathered rect
     for (let k = 0; k < 4; k++) {
       ctx.globalAlpha = 0.012;
       ctx.fillStyle = VEIN;
       ctx.fillRect(-w / 2, -h / 2, w, h);
     }
-
     ctx.restore();
   }
 
   ctx.globalAlpha = 1;
-
   return c;
 }
 
+function canvasToImage(canvas: HTMLCanvasElement): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new window.Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = canvas.toDataURL("image/png");
+  });
+}
+
+function makeSoilCanvas(size = 520) {
+  const c = document.createElement("canvas");
+  c.width = size;
+  c.height = size;
+  const ctx = c.getContext("2d");
+  if (!ctx) return c;
+
+  // base soil tone
+  ctx.fillStyle = "rgb(83, 62, 44)";
+  ctx.fillRect(0, 0, size, size);
+
+  // mottled blobs
+  for (let i = 0; i < 900; i++) {
+    const x = Math.random() * size;
+    const y = Math.random() * size;
+    const r = 2 + Math.random() * 10;
+    const a = 0.03 + Math.random() * 0.06;
+    const shade = 45 + Math.random() * 50;
+    ctx.fillStyle = `rgba(${shade}, ${shade * 0.85}, ${shade * 0.6}, ${a})`;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // tiny specks
+  for (let i = 0; i < 1600; i++) {
+    const x = Math.random() * size;
+    const y = Math.random() * size;
+    const a = 0.06 + Math.random() * 0.12;
+    ctx.fillStyle = `rgba(20,15,10,${a})`;
+    ctx.fillRect(x, y, 1, 1);
+  }
+
+  return c;
+}
 
 /* ---------------- Main ---------------- */
 
@@ -406,6 +443,7 @@ export default function CanvasStage(props: {
   selectedIds: string[];
   setSelectedIds: (ids: string[]) => void;
 
+  // ✅ if true, always pan on pointer down (even over items)
   panMode: boolean;
 
   stageScale: number;
@@ -416,6 +454,7 @@ export default function CanvasStage(props: {
 
   onAddItemAtWorld: (args: { type: ItemType; x: number; y: number }) => void;
   onUpdateItem: (id: string, patch: Partial<StudioItem>) => void;
+  onUpdateCanvas: (patch: Partial<LayoutDoc["canvas"]>) => void;
 
   setCursorWorld: (pos: { x: number; y: number } | null) => void;
   setViewportCenterWorld: (pos: { x: number; y: number } | null) => void;
@@ -431,31 +470,49 @@ export default function CanvasStage(props: {
   const [stageSize, setStageSize] = useState({ w: 900, h: 600 });
   const [toolbarBox, setToolbarBox] = useState<ScreenBox>(null);
   const [toolbarOffset, setToolbarOffset] = useState<{ dx: number; dy: number } | null>(null);
-
   const [editMode, setEditMode] = useState<EditMode>("none");
   const isCoarse = useIsCoarsePointer();
+    // --- Plot boundary controls ---
+  const [showPlotBoundary, setShowPlotBoundary] = useState(true);
+  const [editPlot, setEditPlot] = useState(false);
 
-  const panningRef = useRef({
-    active: false,
-    startX: 0,
-    startY: 0,
-    startPosX: 0,
-    startPosY: 0,
-  });
+  useEffect(() => {
+    if (editPlot) setShowPlotBoundary(true);
+  }, [editPlot]);
 
-  const emptyDownRef = useRef<{ x: number; y: number } | null>(null);
-  const didPanRef = useRef(false);
+  // draft size while dragging (so we can update live without store spam)
+  const [draftCanvas, setDraftCanvas] = useState<{ w: number; h: number } | null>(null);
 
-  const nodeMapRef = useRef<Map<string, Konva.Node>>(new Map());
+  // effective plot size
+  const plotW: number = draftCanvas?.w ?? props.doc.canvas.width;
+  const plotH: number = draftCanvas?.h ?? props.doc.canvas.height;
 
-  // let child components request a cursor
+  const MIN_PLOT_W = 640;
+  const MIN_PLOT_H = 420;
+
+  const commitCanvasSize = useCallback(
+    (next: { w: number; h: number }) => {
+      const w = Math.max(MIN_PLOT_W, Math.round(next.w));
+      const h = Math.max(MIN_PLOT_H, Math.round(next.h)); 
+
+      props.onUpdateCanvas({ width: w, height: h });  
+
+      // ✅ optional: keep items inside when plot shrinks
+      clampItemsToPlot(w, h); 
+
+      setDraftCanvas(null);
+    },
+    [props]
+  );  
+
   const cursorRef = useRef<string>("default");
-  function setWrapCursor(next: string) {
+  const setWrapCursor = useCallback((next: string) => {
     cursorRef.current = next;
     const el = wrapRef.current;
     if (el) el.style.cursor = next;
-  }
+  }, []);
 
+  // --- ResizeObserver: stage size ---
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
@@ -472,351 +529,27 @@ export default function CanvasStage(props: {
     return () => ro.disconnect();
   }, []);
 
-  function mod(n: number, m: number) {
-    return ((n % m) + m) % m;
-  }
+  // --- node map for transformer / bounding box ---
+  const nodeMapRef = useRef<Map<string, Konva.Node>>(new Map());
 
-  function worldFromScreen(pointer: { x: number; y: number }) {
-    return {
-      x: (pointer.x - props.stagePos.x) / props.stageScale,
-      y: (pointer.y - props.stagePos.y) / props.stageScale,
-    };
-  }
-
-  // --- Garden texture layers (client only) ---
-  const [noiseImg, setNoiseImg] = useState<HTMLImageElement | null>(null);
-  const [leafImg, setLeafImg] = useState<HTMLImageElement | null>(null);
-  // Parallax: canopy moves slower than pan, grain moves slightly
-  const leafSize = 520; // MUST match makeLeafSpeckleCanvas() call
-  const noiseSize = 240;
-
-  const leafOffset = {
-    x: mod(-props.stagePos.x * 0.18, leafSize),
-    y: mod(-props.stagePos.y * 0.18, leafSize),
-  };
-
-  const noiseOffset = {
-    x: mod(-props.stagePos.x * 0.06, noiseSize),
-    y: mod(-props.stagePos.y * 0.06, noiseSize),
-  };
-
-  function canvasToImage(canvas: HTMLCanvasElement): Promise<HTMLImageElement> {
-    return new Promise((resolve, reject) => {
-      const img = new window.Image();
-      img.onload = () => resolve(img);
-      img.onerror = reject;
-      img.src = canvas.toDataURL("image/png");
-    });
-  }
-
-  useEffect(() => {
-    let alive = true;
-
-    (async () => {
-      // only runs client-side
-      const noiseCanvas = makeNoiseCanvas(240);
-      const leafCanvas = makeLeafSpeckleCanvas(520);
-
-      const [nImg, lImg] = await Promise.all([
-        canvasToImage(noiseCanvas),
-        canvasToImage(leafCanvas),
-      ]);
-
-      if (!alive) return;
-      setNoiseImg(nImg);
-      setLeafImg(lImg);
-    })().catch(() => {
-      // ignore texture failures; app still works
-    });
-
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-
-  const pinchRef = useRef<{ lastDist: number; lastCenter: { x: number; y: number } | null }>({
-    lastDist: 0,
-    lastCenter: null,
-  });
-  
-  function dist(a: { x: number; y: number }, b: { x: number; y: number }) {
-    return Math.hypot(a.x - b.x, a.y - b.y);
-  }
-  
-  function center(a: { x: number; y: number }, b: { x: number; y: number }) {
-    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-  }
-  
-  function onTouchMove(e: any) {
-    const stage = stageRef.current;
-    if (!stage) return;
-  
-    const pts = stage.getPointersPositions();
-    if (!pts || pts.length !== 2) return;
-  
-    e.evt.preventDefault();
-  
-    const p1 = pts[0];
-    const p2 = pts[1];
-  
-    const c = center(p1, p2);
-    const d = dist(p1, p2);
-  
-    const pr = pinchRef.current;
-  
-    if (!pr.lastCenter) {
-      pr.lastCenter = c;
-      pr.lastDist = d;
-      return;
-    }
-  
-    const oldScale = props.stageScale;
-    const scaleBy = d / pr.lastDist;
-    const newScale = clamp(oldScale * scaleBy, 0.35, 2.6);
-  
-    const pointTo = {
-      x: (c.x - props.stagePos.x) / oldScale,
-      y: (c.y - props.stagePos.y) / oldScale,
-    };
-  
-    props.setStageScale(newScale);
-    props.setStagePos({
-      x: c.x - pointTo.x * newScale,
-      y: c.y - pointTo.y * newScale,
-    });
-  
-    pr.lastCenter = c;
-    pr.lastDist = d;
-  
-    updateSelectionUIRaf();
-  }
-  
-  function onTouchEnd() {
-    pinchRef.current.lastCenter = null;
-    pinchRef.current.lastDist = 0;
-  }
-  
-
-
-  const updateSelectionUI = useCallback(() => {
-    const stage = stageRef.current;
-    const wrap = wrapRef.current;
-    if (!stage || !wrap) {
-      setToolbarBox(null);
-      return;
-    }
-    if (props.selectedIds.length === 0) {
-      setToolbarBox(null);
-      return;
-    }
-
-    const tr = trRef.current;
-    const nodeForRect = tr ?? nodeMapRef.current.get(props.selectedIds[0]);
-    if (!nodeForRect) {
-      setToolbarBox(null);
-      return;
-    }
-
-    const rect = (nodeForRect as any).getClientRect?.({
-      skipTransform: false,
-    }) as
-      | { x: number; y: number; width: number; height: number }
-      | undefined;
-
-    if (!rect) {
-      setToolbarBox(null);
-      return;
-    }
-
-    const left = props.stagePos.x + rect.x * props.stageScale;
-    const top = props.stagePos.y + rect.y * props.stageScale;
-    const width = rect.width * props.stageScale;
-    const height = rect.height * props.stageScale;
-
-    setToolbarBox({ left, top, width, height });
-  }, [props.selectedIds, props.stagePos.x, props.stagePos.y, props.stageScale]);
-
-  const updateSelectionUIRaf = useRafThrottled(updateSelectionUI);
-  const setCursorWorldRaf = useRafThrottled(props.setCursorWorld);
-
-  useEffect(() => {
-    props.setViewportCenterWorld(
-      worldFromScreen({ x: stageSize.w / 2, y: stageSize.h / 2 })
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stageSize.w, stageSize.h, props.stagePos.x, props.stagePos.y, props.stageScale]);
-
-  useEffect(() => {
-    const tr = trRef.current;
-    if (!tr) return;
-
-    const nodes: Konva.Node[] = [];
-    for (const id of props.selectedIds) {
-      const n = nodeMapRef.current.get(id);
-      if (n) nodes.push(n);
-    }
-    tr.nodes(nodes);
-    tr.getLayer()?.batchDraw();
-
-    updateSelectionUIRaf();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.selectedIds, props.doc.items]);
-
-  useEffect(() => {
-    updateSelectionUIRaf();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.stagePos.x, props.stagePos.y, props.stageScale, stageSize.w, stageSize.h]);
-
-  // Reset edit mode when selection changes (keeps it clean)
-  useEffect(() => {
-    setEditMode("none");
-  }, [props.selectedIds.join("|")]);
-
-  useEffect(() => {
-    setToolbarOffset(null);
-  }, [props.selectedIds.join("|")]);
-
-
-  function onWheel(e: any) {
-    e.evt.preventDefault();
-    const stage = stageRef.current;
-    if (!stage) return;
-
-    const oldScale = props.stageScale;
-    const pointer = stage.getPointerPosition();
-    if (!pointer) return;
-
-    const scaleBy = 1.04;
-    const direction = e.evt.deltaY > 0 ? -1 : 1;
-    let newScale = direction > 0 ? oldScale * scaleBy : oldScale / scaleBy;
-    newScale = clamp(newScale, 0.35, 2.6);
-
-    const mousePointTo = {
-      x: (pointer.x - props.stagePos.x) / oldScale,
-      y: (pointer.y - props.stagePos.y) / oldScale,
-    };
-
-    props.setStageScale(newScale);
-    props.setStagePos({
-      x: pointer.x - mousePointTo.x * newScale,
-      y: pointer.y - mousePointTo.y * newScale,
-    });
-
-    updateSelectionUIRaf();
-  }
-
-  function isEmptyHit(e: any) {
-    const stage = stageRef.current;
-    if (!stage) return false;
-    return e.target === stage;
-  }
-
-  function startPan(pointer: { x: number; y: number }) {
-    panningRef.current = {
-      active: true,
-      startX: pointer.x,
-      startY: pointer.y,
-      startPosX: props.stagePos.x,
-      startPosY: props.stagePos.y,
-    };
-  }
-
-  function onMouseDown(e: any) {
-    const stage = stageRef.current;
-    if (!stage) return;
-
-    const pointer = stage.getPointerPosition();
-    if (!pointer) return;
-
-    if (isEmptyHit(e)) {
-      emptyDownRef.current = { x: pointer.x, y: pointer.y };
-      didPanRef.current = false;
-      startPan(pointer);
-    }
-  }
-
-  function onMouseMove() {
-    const stage = stageRef.current;
-    if (!stage) return;
-
-    const pointer = stage.getPointerPosition();
-    if (!pointer) return;
-
-    setCursorWorldRaf(worldFromScreen(pointer));
-
-    if (panningRef.current.active) {
-      const dx = pointer.x - panningRef.current.startX;
-      const dy = pointer.y - panningRef.current.startY;
-
-      if (!didPanRef.current) {
-        const dist = Math.hypot(dx, dy);
-        if (dist > 3) didPanRef.current = true;
-      }
-
-      props.setStagePos({
-        x: panningRef.current.startPosX + dx,
-        y: panningRef.current.startPosY + dy,
-      });
-
-      updateSelectionUIRaf();
-    }
-  }
-
-  function onMouseUp() {
-    if (emptyDownRef.current && !didPanRef.current) {
-      props.setSelectedIds([]);
-      setToolbarBox(null);
-    }
-
-    emptyDownRef.current = null;
-    didPanRef.current = false;
-    panningRef.current.active = false;
-
-    if (!wrapRef.current) return;
-    wrapRef.current.style.cursor =
-      panningRef.current.active ? "grabbing" : cursorRef.current || "default";
-  }
-
-  function onDblClick(e: any) {
-    const stage = stageRef.current;
-    if (!stage) return;
-
-    const pointer = stage.getPointerPosition();
-    if (!pointer) return;
-
-    if (isEmptyHit(e)) {
-      const world = worldFromScreen(pointer);
-      props.onAddItemAtWorld({ type: props.tool, x: world.x - 90, y: world.y - 60 });
-    }
-  }
-
-  function toggleSelect(id: string, additive: boolean) {
-    if (!additive) {
-      props.setSelectedIds([id]);
-      return;
-    }
-    const set = new Set(props.selectedIds);
-    if (set.has(id)) set.delete(id);
-    else set.add(id);
-    props.setSelectedIds(Array.from(set));
-  }
-
+  // --- Items ordering ---
   const itemsSorted = useMemo(
     () => [...props.doc.items].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)),
     [props.doc.items]
   );
-
-  const showTransformer = props.selectedIds.length > 1; // only show transformer for multi-select
 
   const selectedItems = useMemo(() => {
     const set = new Set(props.selectedIds);
     return props.doc.items.filter((i) => set.has(i.id));
   }, [props.doc.items, props.selectedIds]);
 
-  const anyLocked = selectedItems.some((it) => Boolean(it.meta?.locked));
   const single = selectedItems.length === 1 ? selectedItems[0] : null;
+  const anyLocked = selectedItems.some((it) => Boolean(it.meta?.locked));
+  const isSingleTree = single ? isTree(single) : false;
+  const showTransformer = props.selectedIds.length > 1;
 
+
+  // --- Selection profile for Transformer (multi only) ---
   const selectionProfile = useMemo(() => {
     if (selectedItems.length !== 1) {
       return {
@@ -838,7 +571,6 @@ export default function CanvasStage(props: {
     }
 
     const it = selectedItems[0];
-
     if (isPillLike(it)) {
       return {
         keepRatio: false,
@@ -867,152 +599,506 @@ export default function CanvasStage(props: {
     };
   }, [selectedItems]);
 
-  // Grid (less busy): fade + hide when zoomed out
+  // --- Grid (less busy) ---
   const gridStep = 80;
   const showGrid = props.stageScale >= 0.55;
   const gridAlpha = clamp((props.stageScale - 0.55) / 0.9, 0, 1);
-
-  // garden green tint; keep it *very* subtle
   const gridStroke = `rgba(94, 118, 88, ${0.03 + 0.06 * gridAlpha})`;
-  const gridDash = props.stageScale > 1.1 ? [6, 10] : [3, 10];
-
 
   const gridLinesX = useMemo(() => {
     const xs: number[] = [];
-    for (let x = 0; x <= props.doc.canvas.width; x += gridStep) xs.push(x);
+    for (let x = 0; x <= plotW; x += gridStep) xs.push(x);
     return xs;
-  }, [props.doc.canvas.width]);
-
+  }, [plotW]);
+  
   const gridLinesY = useMemo(() => {
     const ys: number[] = [];
-    for (let y = 0; y <= props.doc.canvas.height; y += gridStep) ys.push(y);
+    for (let y = 0; y <= plotH; y += gridStep) ys.push(y);
     return ys;
-  }, [props.doc.canvas.height]);
+  }, [plotH]);
+  
+  // --- World/screen conversion ---
+  const worldFromScreen = useCallback(
+    (pointer: { x: number; y: number }) => ({
+      x: (pointer.x - props.stagePos.x) / props.stageScale,
+      y: (pointer.y - props.stagePos.y) / props.stageScale,
+    }),
+    [props.stagePos.x, props.stagePos.y, props.stageScale]
+  );
 
-  function duplicateSelected() {
+  // --- cursor world (rAF) ---
+  const setCursorWorldRaf = useRafThrottled(props.setCursorWorld);
+
+  // --- Selection UI bbox (rAF) ---
+  const updateSelectionUI = useCallback(() => {
+    const stage = stageRef.current;
+    const wrap = wrapRef.current;
+    if (!stage || !wrap) return setToolbarBox(null);
+    if (props.selectedIds.length === 0) return setToolbarBox(null);
+
+    const tr = trRef.current;
+    const firstNode = nodeMapRef.current.get(props.selectedIds[0]);
+    const nodeForRect = tr && tr.nodes().length ? tr : firstNode;
+    if (!nodeForRect) return setToolbarBox(null);
+
+    const rect = (nodeForRect as any).getClientRect?.({ skipTransform: false }) as
+      | { x: number; y: number; width: number; height: number }
+      | undefined;
+
+    if (!rect) return setToolbarBox(null);
+
+    setToolbarBox({
+      left: props.stagePos.x + rect.x * props.stageScale,
+      top: props.stagePos.y + rect.y * props.stageScale,
+      width: rect.width * props.stageScale,
+      height: rect.height * props.stageScale,
+    });
+  }, [props.selectedIds, props.stagePos.x, props.stagePos.y, props.stageScale]);
+
+  const updateSelectionUIRaf = useRafThrottled(updateSelectionUI);
+
+  // Keep viewport center updated (stable)
+  useEffect(() => {
+    props.setViewportCenterWorld(worldFromScreen({ x: stageSize.w / 2, y: stageSize.h / 2 }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stageSize.w, stageSize.h, props.stagePos.x, props.stagePos.y, props.stageScale]);
+
+  // Transformer nodes sync
+  useEffect(() => {
+    const tr = trRef.current;
+    if (!tr) return;
+
+    const nodes: Konva.Node[] = [];
+    for (const id of props.selectedIds) {
+      const n = nodeMapRef.current.get(id);
+      if (n) nodes.push(n);
+    }
+    tr.nodes(nodes);
+    tr.getLayer()?.batchDraw();
+
+    updateSelectionUIRaf();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.selectedIds, props.doc.items]);
+
+  useEffect(() => {
+    updateSelectionUIRaf();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.stagePos.x, props.stagePos.y, props.stageScale, stageSize.w, stageSize.h]);
+
+  // Reset edit mode + toolbar offset when selection changes
+  useEffect(() => setEditMode("none"), [props.selectedIds.join("|")]);
+  useEffect(() => setToolbarOffset(null), [props.selectedIds.join("|")]);
+
+  /* ---------------- Trees ---------------- */
+
+  const TREE_VARIANTS = ["tree-01", "tree-02", "tree-03", "tree-04", "citrus"] as const;
+  const [treeImages, setTreeImages] = useState<Record<string, HTMLImageElement>>({});
+
+  useEffect(() => {
+    let alive = true;
+
+    (async () => {
+      const entries = await Promise.all(
+        TREE_VARIANTS.map(async (v) => {
+          const img = new window.Image();
+          img.decoding = "async";
+          img.src = `/images/trees/${v}.svg`;
+
+          await new Promise<void>((res, rej) => {
+            img.onload = () => res();
+            img.onerror = () => rej(new Error(`Failed to load tree svg: ${v}`));
+          });
+
+          return [v, img] as const;
+        })
+      );
+
+      if (!alive) return;
+      setTreeImages(Object.fromEntries(entries));
+    })().catch(() => {
+      // ignore
+    });
+
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  /* ---------------- Textures ---------------- */
+
+  const [noiseImg, setNoiseImg] = useState<HTMLImageElement | null>(null);
+  const [leafImg, setLeafImg] = useState<HTMLImageElement | null>(null);
+  const [soilImg, setSoilImg] = useState<HTMLImageElement | null>(null);
+
+
+  const leafSize = 520;
+  const noiseSize = 240;
+
+  const mod = useCallback((n: number, m: number) => ((n % m) + m) % m, []);
+
+  const leafOffset = useMemo(
+    () => ({
+      x: mod(-props.stagePos.x * 0.18, leafSize),
+      y: mod(-props.stagePos.y * 0.18, leafSize),
+    }),
+    [mod, props.stagePos.x, props.stagePos.y]
+  );
+
+  const noiseOffset = useMemo(
+    () => ({
+      x: mod(-props.stagePos.x * 0.06, noiseSize),
+      y: mod(-props.stagePos.y * 0.06, noiseSize),
+    }),
+    [mod, props.stagePos.x, props.stagePos.y]
+  );
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const [nImg, lImg, sImg] = await Promise.all([
+        canvasToImage(makeNoiseCanvas(240)),
+        canvasToImage(makeLeafSpeckleCanvas(520)),
+        canvasToImage(makeSoilCanvas(520)),
+      ]);
+      if (!alive) return;
+      setNoiseImg(nImg);
+      setLeafImg(lImg);
+      setSoilImg(sImg);
+    })().catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []); 
+
+
+
+  /* ---------------- Pan / Pointer ---------------- */
+
+  const panningRef = useRef({
+    active: false,
+    startX: 0,
+    startY: 0,
+    startPosX: 0,
+    startPosY: 0,
+  });
+  const emptyDownRef = useRef<{ x: number; y: number } | null>(null);
+  const didPanRef = useRef(false);
+
+  const isEmptyHit = useCallback((e: any) => {
+    const stage = stageRef.current;
+    if (!stage) return false;
+    return e.target === stage;
+  }, []);
+
+  const startPan = useCallback(
+    (pointer: { x: number; y: number }) => {
+      panningRef.current = {
+        active: true,
+        startX: pointer.x,
+        startY: pointer.y,
+        startPosX: props.stagePos.x,
+        startPosY: props.stagePos.y,
+      };
+      setWrapCursor("grabbing");
+    },
+    [props.stagePos.x, props.stagePos.y, setWrapCursor]
+  );
+
+  // Unified: MouseDown + TouchStart
+  const onStagePointerDown = useCallback(
+    (e: any) => {
+      const stage = stageRef.current;
+      if (!stage) return;
+
+      const pointer = stage.getPointerPosition();
+      if (!pointer) return;
+
+      // If panMode, pan no matter what you touched.
+      // Otherwise only start pan on empty canvas.
+      if (props.panMode || isEmptyHit(e)) {
+        emptyDownRef.current = { x: pointer.x, y: pointer.y };
+        didPanRef.current = false;
+        startPan(pointer);
+      }
+    },
+    [isEmptyHit, props.panMode, startPan]
+  );
+
+  const onStagePointerMove = useCallback(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+
+    const pointer = stage.getPointerPosition();
+    if (!pointer) return;
+
+    setCursorWorldRaf(worldFromScreen(pointer));
+
+    if (!panningRef.current.active) return;
+
+    const dx = pointer.x - panningRef.current.startX;
+    const dy = pointer.y - panningRef.current.startY;
+
+    if (!didPanRef.current) {
+      const d = Math.hypot(dx, dy);
+      if (d > 3) didPanRef.current = true;
+    }
+
+    props.setStagePos({
+      x: panningRef.current.startPosX + dx,
+      y: panningRef.current.startPosY + dy,
+    });
+
+    updateSelectionUIRaf();
+  }, [props, setCursorWorldRaf, updateSelectionUIRaf, worldFromScreen]);
+
+  const endPan = useCallback(() => {
+    panningRef.current.active = false;
+    setWrapCursor(cursorRef.current || "default");
+  }, [setWrapCursor]);
+
+  const onStagePointerUp = useCallback(() => {
+    // click on empty canvas -> clear selection (only if user didn’t drag)
+    if (emptyDownRef.current && !didPanRef.current && !props.panMode) {
+      props.setSelectedIds([]);
+      setToolbarBox(null);
+    }
+    emptyDownRef.current = null;
+    didPanRef.current = false;
+    endPan();
+  }, [endPan, props.panMode, props.setSelectedIds]);
+
+  /* ---------------- Zoom (wheel + pinch) ---------------- */
+
+  const onWheel = useCallback(
+    (e: any) => {
+      e.evt.preventDefault();
+      const stage = stageRef.current;
+      if (!stage) return;
+
+      const oldScale = props.stageScale;
+      const pointer = stage.getPointerPosition();
+      if (!pointer) return;
+
+      const scaleBy = 1.04;
+      const direction = e.evt.deltaY > 0 ? -1 : 1;
+
+      let newScale = direction > 0 ? oldScale * scaleBy : oldScale / scaleBy;
+      newScale = clamp(newScale, 0.35, 2.6);
+
+      const mousePointTo = {
+        x: (pointer.x - props.stagePos.x) / oldScale,
+        y: (pointer.y - props.stagePos.y) / oldScale,
+      };
+
+      props.setStageScale(newScale);
+      props.setStagePos({
+        x: pointer.x - mousePointTo.x * newScale,
+        y: pointer.y - mousePointTo.y * newScale,
+      });
+
+      updateSelectionUIRaf();
+    },
+    [props, updateSelectionUIRaf]
+  );
+
+  const pinchRef = useRef<{ lastDist: number; lastCenter: { x: number; y: number } | null }>({
+    lastDist: 0,
+    lastCenter: null,
+  });
+
+  function dist(a: { x: number; y: number }, b: { x: number; y: number }) {
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  }
+  function center(a: { x: number; y: number }, b: { x: number; y: number }) {
+    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  }
+
+  function clampItemsToPlot(nextW: number, nextH: number) {
+    const margin = 10; // keep a little breathing room
+    for (const it of props.doc.items) {
+      const maxX = Math.max(0, nextW - it.w - margin);
+      const maxY = Math.max(0, nextH - it.h - margin);
+
+      const nx = clamp(it.x, margin, maxX);
+      const ny = clamp(it.y, margin, maxY);
+
+      if (nx !== it.x || ny !== it.y) {
+        props.onUpdateItem(it.id, { x: nx, y: ny });
+      }
+    }
+  }
+
+  const onTouchMove = useCallback(
+    (e: any) => {
+      const stage = stageRef.current;
+      if (!stage) return;
+
+      const pts = stage.getPointersPositions();
+      if (!pts || pts.length !== 2) return;
+
+      e.evt.preventDefault();
+
+      const p1 = pts[0];
+      const p2 = pts[1];
+
+      const c = center(p1, p2);
+      const d = dist(p1, p2);
+
+      const pr = pinchRef.current;
+      if (!pr.lastCenter) {
+        pr.lastCenter = c;
+        pr.lastDist = d;
+        return;
+      }
+
+      const oldScale = props.stageScale;
+      const scaleBy = d / pr.lastDist;
+      const newScale = clamp(oldScale * scaleBy, 0.35, 2.6);
+
+      const pointTo = {
+        x: (c.x - props.stagePos.x) / oldScale,
+        y: (c.y - props.stagePos.y) / oldScale,
+      };
+
+      props.setStageScale(newScale);
+      props.setStagePos({
+        x: c.x - pointTo.x * newScale,
+        y: c.y - pointTo.y * newScale,
+      });
+
+      pr.lastCenter = c;
+      pr.lastDist = d;
+
+      updateSelectionUIRaf();
+    },
+    [props, updateSelectionUIRaf]
+  );
+
+  const onTouchEnd = useCallback(() => {
+    pinchRef.current.lastCenter = null;
+    pinchRef.current.lastDist = 0;
+  }, []);
+
+  /* ---------------- Interactions: select / place ---------------- */
+
+  const toggleSelect = useCallback(
+    (id: string, additive: boolean) => {
+      if (!additive) return props.setSelectedIds([id]);
+      const set = new Set(props.selectedIds);
+      if (set.has(id)) set.delete(id);
+      else set.add(id);
+      props.setSelectedIds(Array.from(set));
+    },
+    [props.selectedIds, props.setSelectedIds]
+  );
+
+  const onDblClick = useCallback(
+    (e: any) => {
+      const stage = stageRef.current;
+      if (!stage) return;
+
+      const pointer = stage.getPointerPosition();
+      if (!pointer) return;
+
+      // Only place on empty canvas (not over shapes)
+      if (!isEmptyHit(e)) return;
+
+      const world = worldFromScreen(pointer);
+      props.onAddItemAtWorld({ type: props.tool, x: world.x - 90, y: world.y - 60 });
+    },
+    [isEmptyHit, props.onAddItemAtWorld, props.tool, worldFromScreen]
+  );
+
+  /* ---------------- Toolbar actions ---------------- */
+
+  const duplicateSelected = useCallback(() => {
     props.onCopySelected();
     props.onPasteAtCursor();
-  }
+  }, [props.onCopySelected, props.onPasteAtCursor]);
 
-  function deleteSelected() {
+  const deleteSelected = useCallback(() => {
     props.onDeleteSelected();
-  }
+  }, [props.onDeleteSelected]);
 
-  function toggleLockSelected() {
+  const toggleLockSelected = useCallback(() => {
     for (const it of selectedItems) {
       const locked = Boolean(it.meta?.locked);
       props.onUpdateItem(it.id, { meta: { ...it.meta, locked: !locked } });
     }
     updateSelectionUIRaf();
-  }
+  }, [props.onUpdateItem, selectedItems, updateSelectionUIRaf]);
 
-  function setRadiusSelected(radius: number) {
-    for (const it of selectedItems) {
-      if (Boolean(it.meta?.locked)) continue;
-      if (!isRectLike(it)) continue;
-      // If user is using polygon/curvature/bezier, radius isn't relevant
-      if (hasBezier(it) || hasCurvature(it) || hasPolygon(it)) continue;
+  const setRadiusSelected = useCallback(
+    (radius: number) => {
+      for (const it of selectedItems) {
+        if (Boolean(it.meta?.locked)) continue;
+        if (!isRectLike(it)) continue;
+        if (hasBezier(it) || hasCurvature(it) || hasPolygon(it)) continue;
 
-      props.onUpdateItem(it.id, {
-        style: { ...it.style, radius: clamp(radius, 0, 220) },
-      });
-    }
-    updateSelectionUIRaf();
-  }
+        props.onUpdateItem(it.id, { style: { ...it.style, radius: clamp(radius, 0, 220) } });
+      }
+      updateSelectionUIRaf();
+    },
+    [props.onUpdateItem, selectedItems, updateSelectionUIRaf]
+  );
 
-  function cycleEditMode() {
+  const cycleEditMode = useCallback(() => {
     if (!single) return;
     if (single.meta?.locked) return;
-
-    // Decide what edit means for the current geometry
-    if (hasBezier(single)) {
-      setEditMode((m) => (m === "bezier" ? "none" : "bezier"));
-      return;
-    }
-    if (hasCurvature(single)) {
-      setEditMode((m) => (m === "curvature" ? "none" : "curvature"));
-      return;
-    }
-    if (hasPolygon(single)) {
-      setEditMode((m) => (m === "polygon" ? "none" : "polygon"));
-      return;
-    }
-    if (isRectLike(single) && !isPillLike(single)) {
-      setEditMode((m) => (m === "corners" ? "none" : "corners"));
-      return;
-    }
+    if (isTree(single)) return;
+    if (hasBezier(single)) return setEditMode((m) => (m === "bezier" ? "none" : "bezier"));
+    if (hasCurvature(single)) return setEditMode((m) => (m === "curvature" ? "none" : "curvature"));
+    if (hasPolygon(single)) return setEditMode((m) => (m === "polygon" ? "none" : "polygon"));
+    if (isRectLike(single) && !isPillLike(single)) return setEditMode((m) => (m === "corners" ? "none" : "corners"));
     setEditMode("none");
-  }
+  }, [single]);
 
-  function convertSelected(kind: "rect" | "polygon" | "curvature" | "bezier") {
-    if (!single) return;
-    if (single.meta?.locked) return;
+  const convertSelected = useCallback(
+    (kind: "rect" | "polygon" | "curvature" | "bezier") => {
+      if (!single) return;
+      if (single.meta?.locked) return;
 
-    if (kind === "rect") {
-      props.onUpdateItem(single.id, {
-        meta: {
-          ...single.meta,
-          polygon: undefined,
-          curvature: undefined,
-          bezier: undefined,
-          cornerRadii: undefined,
-        },
-      });
-      setEditMode("corners");
-      updateSelectionUIRaf();
-      return;
-    }
+      if (kind === "rect") {
+        props.onUpdateItem(single.id, {
+          meta: { ...single.meta, polygon: undefined, curvature: undefined, bezier: undefined, cornerRadii: undefined },
+        });
+        setEditMode("corners");
+        updateSelectionUIRaf();
+        return;
+      }
 
-    if (kind === "polygon") {
-      const poly: PolygonPath = single.meta.polygon ?? rectToPolygon();
-      props.onUpdateItem(single.id, {
-        meta: {
-          ...single.meta,
-          polygon: poly,
-          curvature: undefined,
-          bezier: undefined,
-          cornerRadii: undefined,
-        },
-      });
-      setEditMode("polygon");
-      updateSelectionUIRaf();
-      return;
-    }
+      if (kind === "polygon") {
+        const poly: PolygonPath = single.meta.polygon ?? rectToPolygon();
+        props.onUpdateItem(single.id, {
+          meta: { ...single.meta, polygon: poly, curvature: undefined, bezier: undefined, cornerRadii: undefined },
+        });
+        setEditMode("polygon");
+        updateSelectionUIRaf();
+        return;
+      }
 
-    if (kind === "curvature") {
-      const closed = single.type !== "path"; // paths often want open; you can toggle later
-      const curv: CurvaturePath = single.meta.curvature ?? rectToCurvature(closed);
-      props.onUpdateItem(single.id, {
-        meta: {
-          ...single.meta,
-          curvature: curv,
-          polygon: undefined,
-          bezier: undefined,
-          cornerRadii: undefined,
-        },
-      });
-      setEditMode("curvature");
-      updateSelectionUIRaf();
-      return;
-    }
+      if (kind === "curvature") {
+        const closed = single.type !== "path";
+        const curv: CurvaturePath = single.meta.curvature ?? rectToCurvature(closed);
+        props.onUpdateItem(single.id, {
+          meta: { ...single.meta, curvature: curv, polygon: undefined, bezier: undefined, cornerRadii: undefined },
+        });
+        setEditMode("curvature");
+        updateSelectionUIRaf();
+        return;
+      }
 
-    if (kind === "bezier") {
-      // Advanced mode. For rects, derive from radius. For others, start from rect-ish.
-      const bez: BezierPath = single.meta.bezier ?? roundedRectToBezierPath(single);
-      props.onUpdateItem(single.id, {
-        meta: {
-          ...single.meta,
-          bezier: bez,
-          curvature: undefined,
-          polygon: undefined,
-          cornerRadii: undefined,
-        },
-      });
-      setEditMode("bezier");
-      updateSelectionUIRaf();
-      return;
-    }
-  }
+      if (kind === "bezier") {
+        const bez: BezierPath = single.meta.bezier ?? roundedRectToBezierPath(single);
+        props.onUpdateItem(single.id, {
+          meta: { ...single.meta, bezier: bez, curvature: undefined, polygon: undefined, cornerRadii: undefined },
+        });
+        setEditMode("bezier");
+        updateSelectionUIRaf();
+      }
+    },
+    [props.onUpdateItem, single, updateSelectionUIRaf]
+  );
 
   const curveLabel =
     editMode === "corners"
@@ -1026,11 +1112,11 @@ export default function CanvasStage(props: {
             : "Edit";
 
   const canRadius =
-    Boolean(single) &&
-    isRectLike(single!) &&
-    !hasBezier(single!) &&
-    !hasCurvature(single!) &&
-    !hasPolygon(single!);
+    Boolean(single) && isRectLike(single!) && !hasBezier(single!) && !hasCurvature(single!) && !hasPolygon(single!);
+
+  const isTreeSelected = isSingleTree;
+
+  /* ---------------- Render ---------------- */
 
   return (
     <section
@@ -1039,36 +1125,74 @@ export default function CanvasStage(props: {
       style={{
         touchAction: "none",
         cursor: panningRef.current.active ? "grabbing" : cursorRef.current || "default",
-        background:
-          "radial-gradient(circle at 28% 10%, rgba(214, 234, 210, 0.65), rgba(248, 246, 240, 1) 40%, rgba(243, 239, 231, 1) 100%)",
-
+        background: "rgba(248,246,240,1)"
       }}
     >
+      <div className="absolute left-4 top-16 z-10 flex items-center gap-2 rounded-full border border-black/10 bg-white/70 px-3 py-2 text-xs text-black/70 shadow-sm backdrop-blur">
+        <button
+          type="button"
+          className="rounded-full px-2 py-1 hover:bg-black/5 transition"
+          onClick={() => setShowPlotBoundary((v) => !v)}
+        >
+          {showPlotBoundary ? "Hide boundary" : "Show boundary"}
+        </button>
+
+        <button
+          type="button"
+          className={[
+            "rounded-full px-2 py-1 hover:bg-black/5 transition",
+            editPlot ? "bg-black/5 ring-1 ring-black/10" : "",
+          ].join(" ")}
+          onClick={() => setEditPlot((v) => !v)}
+        >
+          {editPlot ? "Exit plot edit" : "Edit plot"}
+        </button>
+        
+        <button
+          type="button"
+          className="rounded-full px-2 py-1 hover:bg-black/5 transition"
+          onClick={() => {
+            // Focus plot (center it)
+            const cx = plotW / 2;
+            const cy = plotH / 2;
+            props.setStagePos({
+              x: stageSize.w / 2 - cx * props.stageScale,
+              y: stageSize.h / 2 - cy * props.stageScale,
+            });
+          }}
+        >
+          Focus
+        </button>
+        
+        <span className="opacity-60">
+          {Math.round(plotW)}×{Math.round(plotH)}
+        </span>
+      </div>
+        
       {toolbarBox ? (
         <FloatingToolbar
           box={toolbarBox}
           wrapSize={stageSize}
           locked={anyLocked}
-          canRadius={canRadius}
+          canRadius={Boolean(single) && !isTreeSelected && isRectLike(single!) && !hasBezier(single!) && !hasCurvature(single!) && !hasPolygon(single!)}
           currentRadius={single ? (single.style?.radius ?? 0) : 0}
           editLabel={curveLabel}
           editOn={editMode !== "none"}
-          canEdit={Boolean(single) && !anyLocked}
+          canEdit={Boolean(single) && !anyLocked && !isTreeSelected}
           onToggleEdit={cycleEditMode}
           onDuplicate={duplicateSelected}
           onToggleLock={toggleLockSelected}
           onDelete={deleteSelected}
           onSetRadius={setRadiusSelected}
-          onConvert={(k) => convertSelected(k)}
-          canConvert={Boolean(single) && !anyLocked}
+          onConvert={convertSelected}
+          canConvert={Boolean(single) && !anyLocked && !isTreeSelected}
           offset={toolbarOffset}
           onOffsetChange={setToolbarOffset}
         />
       ) : null}
 
       <div className="absolute left-4 top-4 z-10 rounded-full border border-black/10 bg-white/70 px-3 py-2 text-xs text-black/70 shadow-sm backdrop-blur">
-        Plot · {props.doc.items.length} items · Selected: {props.selectedIds.length} · Double-click
-        to place
+        Plot · {props.doc.items.length} items · Selected: {props.selectedIds.length} · Double-click to place
       </div>
 
       <div className="h-full w-full overflow-hidden">
@@ -1081,25 +1205,66 @@ export default function CanvasStage(props: {
           scaleX={props.stageScale}
           scaleY={props.stageScale}
           onWheel={onWheel}
-          onMouseDown={onMouseDown}
-          onMouseMove={onMouseMove}
-          onMouseUp={onMouseUp}
+          onMouseDown={onStagePointerDown}
+          onMouseMove={onStagePointerMove}
+          onMouseUp={onStagePointerUp}
+          onTouchStart={onStagePointerDown}
+          onTouchMove={(e) => {
+            onTouchMove(e);
+            onStagePointerMove();
+          }}
+          onTouchEnd={() => {
+            onTouchEnd();
+            onStagePointerUp();
+          }}
+          onTouchCancel={() => {
+            onTouchEnd();
+            onStagePointerUp();
+          }}
           onDblClick={onDblClick}
-          onTouchMove={onTouchMove}
-          onTouchEnd={onTouchEnd}
-          onTouchCancel={onTouchEnd}
         >
           <Layer>
-            {/* --- Plot background: soil card --- */}
+                        {/* --- Infinite workspace background (paper) --- */}
+            {/* --- Infinite workspace background (clean paper) --- */}
+            {(() => {
+              const INF = Math.max(plotW, plotH) * 40;
+              return (
+                <>
+                  <Rect
+                    x={-INF}
+                    y={-INF}
+                    width={INF * 2}
+                    height={INF * 2}
+                    fill="rgba(248,246,240,1)"
+                    listening={false}
+                  />
+
+                  {noiseImg ? (
+                    <Rect
+                      x={-INF}
+                      y={-INF}
+                      width={INF * 2}
+                      height={INF * 2}
+                      fillPatternImage={noiseImg}
+                      fillPatternRepeat="repeat"
+                      fillPatternOffset={noiseOffset}
+                      opacity={0.035}
+                      listening={false}
+                    />
+                  ) : null}
+                </>
+              );
+            })()}
+            
+            {/* --- Plot boundary --- */}
             <Rect
               x={0}
               y={0}
-              width={props.doc.canvas.width}
-              height={props.doc.canvas.height}
+              width={plotW}
+              height={plotH}
               cornerRadius={26}
-              // warm soil gradient
               fillLinearGradientStartPoint={{ x: 0, y: 0 }}
-              fillLinearGradientEndPoint={{ x: 0, y: props.doc.canvas.height }}
+              fillLinearGradientEndPoint={{ x: 0, y: plotH }}
               fillLinearGradientColorStops={[
                 0,
                 "rgba(249,247,242,1)",
@@ -1110,59 +1275,63 @@ export default function CanvasStage(props: {
                 1,
                 "rgba(224,209,188,1)",
               ]}
-              stroke="rgba(56, 72, 56, 0.18)"
-              strokeWidth={2}
-              shadowColor="rgba(15,23,42,0.10)"
-              shadowBlur={18}
+              stroke={showPlotBoundary ? "rgba(56, 72, 56, 0.12)" : "rgba(0,0,0,0)"}
+              strokeWidth={showPlotBoundary ? 2 : 0}
+              shadowColor={showPlotBoundary ? "rgba(15,23,42,0.07)" : "rgba(0,0,0,0)"}
+              shadowBlur={showPlotBoundary ? 14 : 0}
               shadowOffsetX={0}
-              shadowOffsetY={12}
-              shadowEnabled
+              shadowOffsetY={showPlotBoundary ? 10 : 0}
+              shadowEnabled={showPlotBoundary}
               listening={false}
             />
-            {/* --- Plot edge depth (adds “cut into soil” feel) --- */}
+
+
+            {/* Edge depth */}
             <Rect
               x={0}
               y={0}
-              width={props.doc.canvas.width}
-              height={props.doc.canvas.height}
+              width={plotW}
+              height={plotH}
               cornerRadius={26}
               fillLinearGradientStartPoint={{ x: 0, y: 0 }}
-              fillLinearGradientEndPoint={{ x: 0, y: props.doc.canvas.height }}
+              fillLinearGradientEndPoint={{ x: 0, y: plotH }}
               fillLinearGradientColorStops={[
-                0, "rgba(0,0,0,0.12)",
-                0.08, "rgba(0,0,0,0.02)",
-                0.92, "rgba(0,0,0,0.04)",
-                1, "rgba(0,0,0,0.16)",
+                0,
+                "rgba(0,0,0,0.12)",
+                0.08,
+                "rgba(0,0,0,0.02)",
+                0.92,
+                "rgba(0,0,0,0.04)",
+                1,
+                "rgba(0,0,0,0.16)",
               ]}
               opacity={0.55}
               listening={false}
             />
-            
 
-            {/* --- Fine paper/soil grain --- */}
+            {/* Grain */}
             {noiseImg ? (
               <Rect
                 x={0}
                 y={0}
-                width={props.doc.canvas.width}
-                height={props.doc.canvas.height}
+                width={plotW}
+                height={plotH}
                 fillPatternImage={noiseImg}
                 fillPatternRepeat="repeat"
                 fillPatternOffset={noiseOffset}
                 fillPatternScale={{ x: 1, y: 1 }}
-                opacity={0.10}
+                opacity={0.1}
                 listening={false}
               />
             ) : null}
 
-
-            {/* --- Sparse “leaf shadow” speckles --- */}
+            {/* Leaf speckles */}
             {leafImg ? (
               <Rect
                 x={0}
                 y={0}
-                width={props.doc.canvas.width}
-                height={props.doc.canvas.height}
+                width={plotW}
+                height={plotH}
                 fillPatternImage={leafImg}
                 fillPatternRepeat="repeat"
                 fillPatternOffset={leafOffset}
@@ -1171,71 +1340,42 @@ export default function CanvasStage(props: {
                 listening={false}
               />
             ) : null}
-            
-            {/* --- Soft vignette so the plot feels physical --- */}
+
+            {/* Soft vignette */}
             <Rect
               x={0}
               y={0}
-              width={props.doc.canvas.width}
-              height={props.doc.canvas.height}
+              width={plotW}
+              height={plotH}
               cornerRadius={26}
               fillRadialGradientStartPoint={{
-                x: props.doc.canvas.width * 0.48,
-                y: props.doc.canvas.height * 0.42,
+                x: plotW * 0.48,
+                y: plotH * 0.42,
               }}
               fillRadialGradientEndPoint={{
-                x: props.doc.canvas.width * 0.48,
-                y: props.doc.canvas.height * 0.42,
+                x: plotW * 0.48,
+                y: plotH * 0.42,
               }}
-              fillRadialGradientStartRadius={props.doc.canvas.width * 0.18}
-              fillRadialGradientEndRadius={props.doc.canvas.width * 0.92}
-              fillRadialGradientColorStops={[
-                0, "rgba(255,255,255,0.20)",
-                1, "rgba(255,255,255,0)",
-              ]}
+              fillRadialGradientStartRadius={plotW * 0.18}
+              fillRadialGradientEndRadius={plotW * 0.92}
+              fillRadialGradientColorStops={[0, "rgba(255,255,255,0.20)", 1, "rgba(255,255,255,0)"]}
               opacity={0.28}
               listening={false}
             />
 
-            <Rect
-              x={0}
-              y={0}
-              width={props.doc.canvas.width}
-              height={props.doc.canvas.height}
-              cornerRadius={26}
-              fillLinearGradientStartPoint={{ x: 0, y: 0 }}
-              fillLinearGradientEndPoint={{ x: props.doc.canvas.width, y: props.doc.canvas.height }}
-              fillLinearGradientColorStops={[
-                0, "rgba(255,255,255,0.35)",
-                0.25, "rgba(255,255,255,0.06)",
-                1, "rgba(255,255,255,0)",
-              ]}
-              listening={false}
-            />
-
+            {/* Grid */}
             {showGrid
               ? gridLinesX.map((x) => (
-                  <Line
-                    key={`gx-${x}`}
-                    points={[x, 0, x, props.doc.canvas.height]}
-                    stroke={gridStroke}
-                    strokeWidth={1}
-                    listening={false}
-                  />
+                  <Line key={`gx-${x}`} points={[x, 0, x, plotH]} stroke={gridStroke} strokeWidth={1} listening={false} />
                 ))
               : null}
             {showGrid
               ? gridLinesY.map((y) => (
-                  <Line
-                    key={`gy-${y}`}
-                    points={[0, y, props.doc.canvas.width, y]}
-                    stroke={gridStroke}
-                    strokeWidth={1}
-                    listening={false}
-                  />
+                  <Line key={`gy-${y}`} points={[0, y, plotW, y]} stroke={gridStroke} strokeWidth={1} listening={false} />
                 ))
               : null}
 
+            {/* Items */}
             {itemsSorted.map((item) => (
               <ItemNodeMemo
                 key={item.id}
@@ -1244,26 +1384,32 @@ export default function CanvasStage(props: {
                 locked={Boolean(item.meta?.locked)}
                 stageScale={props.stageScale}
                 editMode={props.selectedIds.length === 1 ? editMode : "none"}
+                isCoarse={isCoarse}
+                treeImages={treeImages}
+                soilImg={soilImg}
                 setWrapCursor={setWrapCursor}
                 onRegister={(node) => {
                   if (node) nodeMapRef.current.set(item.id, node);
                   else nodeMapRef.current.delete(item.id);
                 }}
                 onSelect={(evt) => toggleSelect(item.id, evt.shiftKey)}
-                onCommit={(patch) => {
+                onCommit={(patch: Partial<StudioItem>) => {
                   if (Boolean(item.meta?.locked)) return;
                   props.onUpdateItem(item.id, patch);
                   updateSelectionUIRaf();
                 }}
+                
                 onSelectionUI={() => updateSelectionUIRaf()}
-                isCoarse={isCoarse}
+                // ✅ When panMode is active, ItemNode disables its own dragging (so pan wins)
+                panMode={props.panMode}
               />
             ))}
+
             {showTransformer ? (
               <Transformer
                 ref={trRef}
-                rotateEnabled={false}
-                keepRatio={selectionProfile.keepRatio}
+                rotateEnabled={isSingleTree}
+                keepRatio={false}
                 padding={6}
                 borderStroke="rgba(0,0,0,0)"
                 borderStrokeWidth={0}
@@ -1272,21 +1418,74 @@ export default function CanvasStage(props: {
                 anchorStroke="rgba(111, 102, 255, 0.55)"
                 anchorStrokeWidth={1.2}
                 anchorFill="rgba(255,255,255,0.98)"
-                enabledAnchors={selectionProfile.anchors as any}
+                centeredScaling={false}
+                enabledAnchors={
+                  isSingleTree
+                    ? (["top-left", "top-right", "bottom-left", "bottom-right"] as any)
+                    : (selectionProfile.anchors as any)
+                }
                 boundBoxFunc={(oldBox, newBox) => {
-                  if (newBox.width < selectionProfile.minW || newBox.height < selectionProfile.minH) {
-                    return oldBox;
-                  }
-                  if (selectionProfile.clampH) {
-                    const { min, max } = selectionProfile.clampH;
-                    return { ...newBox, height: clamp(newBox.height, min, max) };
-                  }
+                  const minW = 24;
+                  const minH = 24;
+                  if (newBox.width < minW || newBox.height < minH) return oldBox;
                   return newBox;
                 }}
                 onTransform={() => updateSelectionUIRaf()}
                 onTransformEnd={() => updateSelectionUIRaf()}
               />
-            ) : null}     
+            ) : null}
+                        {/* --- Plot resize handle (bottom-right) --- */}
+            {editPlot ? (
+              <Group>
+                {/* bigger invisible hit area */}
+                <Circle
+                  x={plotW}
+                  y={plotH}
+                  radius={18}
+                  fill="rgba(0,0,0,0.001)"
+                  draggable
+                  onDragStart={(e) => {
+                    (e as any).cancelBubble = true;
+                    setWrapCursor("nwse-resize");
+                  }}
+                  onMouseEnter={() => setWrapCursor("nwse-resize")}
+                  onMouseLeave={() => setWrapCursor("default")}
+                  dragBoundFunc={(pos) => {
+                    const w = Math.max(MIN_PLOT_W, pos.x);
+                    const h = Math.max(MIN_PLOT_H, pos.y);
+                    return { x: w, y: h };
+                  }}
+                  onDragMove={(e) => {
+                    (e as any).cancelBubble = true;
+                    const w = Math.max(MIN_PLOT_W, e.target.x());
+                    const h = Math.max(MIN_PLOT_H, e.target.y());
+                    setDraftCanvas({ w, h });
+                  }}
+                  onDragEnd={(e) => {
+                    (e as any).cancelBubble = true;
+                    const w = Math.max(MIN_PLOT_W, e.target.x());
+                    const h = Math.max(MIN_PLOT_H, e.target.y());
+                    commitCanvasSize({ w, h });
+                    setWrapCursor("default");
+                  }}
+                />
+                
+                {/* visible knob */}
+                <Circle
+                  x={plotW}
+                  y={plotH}
+                  radius={7}
+                  fill="rgba(255,255,255,0.98)"
+                  stroke="rgba(111, 102, 255, 0.70)"
+                  strokeWidth={1.2}
+                  shadowColor="rgba(111, 102, 255, 0.22)"
+                  shadowBlur={10}
+                  shadowOffsetX={0}
+                  shadowOffsetY={6}
+                  listening={false}
+                />
+              </Group>
+            ) : null}
           </Layer>
         </Stage>
       </div>
@@ -1303,39 +1502,21 @@ function ItemNode(props: {
   stageScale: number;
   editMode: EditMode;
   isCoarse: boolean;
+  treeImages?: Record<string, HTMLImageElement>;
+  soilImg?: HTMLImageElement | null;
+  panMode: boolean;
 
   setWrapCursor: (cursor: string) => void;
 
   onRegister: (node: Konva.Node | null) => void;
   onSelect: (evt: { shiftKey: boolean }) => void;
-
-  // commit-only writes
   onCommit: (patch: Partial<StudioItem>) => void;
-
   onSelectionUI: () => void;
 }) {
   const groupRef = useRef<Konva.Group>(null);
   const rectRef = useRef<Konva.Rect>(null);
   const textRef = useRef<Konva.Text>(null);
-
-  function keepLabelReadable() {
-    const g = groupRef.current;
-    const t = textRef.current;
-    if (!g || !t) return;
-
-    const sx = g.scaleX();
-    const sy = g.scaleY();
-
-    if (Math.abs(sx) > 1e-6) t.scaleX(1 / sx);
-    if (Math.abs(sy) > 1e-6) t.scaleY(1 / sy);
-
-    // If you want label to stay upright even if the shape rotates:
-    // t.rotation(-g.rotation());
-
-    t.getLayer()?.batchDraw();
-  }
-
-  const transformStartRef = useRef<{ x: number; y: number } | null>(null);
+  const isBed = props.item.type === "bed";
 
   const [hovered, setHovered] = useState(false);
 
@@ -1343,6 +1524,7 @@ function ItemNode(props: {
   const [draftCurv, setDraftCurv] = useState<CurvaturePath | null>(null);
   const [draftPoly, setDraftPoly] = useState<PolygonPath | null>(null);
 
+  // register/unregister node
   useEffect(() => {
     props.onRegister(groupRef.current);
     return () => props.onRegister(null);
@@ -1356,60 +1538,43 @@ function ItemNode(props: {
       setDraftPoly(null);
       return;
     }
-    if (props.editMode === "curvature" && props.item.meta.curvature) {
-      setDraftCurv(structuredClone(props.item.meta.curvature));
-    } else {
-      setDraftCurv(null);
-    }
-    if (props.editMode === "polygon" && props.item.meta.polygon) {
-      setDraftPoly(structuredClone(props.item.meta.polygon));
-    } else {
-      setDraftPoly(null);
-    }
+    if (props.editMode === "curvature" && props.item.meta.curvature) setDraftCurv(structuredClone(props.item.meta.curvature));
+    else setDraftCurv(null);
+
+    if (props.editMode === "polygon" && props.item.meta.polygon) setDraftPoly(structuredClone(props.item.meta.polygon));
+    else setDraftPoly(null);
   }, [props.selected, props.editMode, props.item.id]);
 
-  useEffect(() => {
+  // Keep label readable only when group scaling changes (avoid effect on every render)
+  const keepLabelReadable = useCallback(() => {
     const g = groupRef.current;
     const t = textRef.current;
     if (!g || !t) return;
 
-    // If group is being scaled by handles, keep text readable
     const sx = g.scaleX();
     const sy = g.scaleY();
 
-    // when not scaling, ensure normal
-    if (Math.abs(sx - 1) < 1e-3 && Math.abs(sy - 1) < 1e-3) {
-      t.scaleX(1);
-      t.scaleY(1);
-      t.rotation(-g.rotation());
-      return;
-    }
+    if (Math.abs(sx) > 1e-6) t.scaleX(1 / sx);
+    if (Math.abs(sy) > 1e-6) t.scaleY(1 / sy);
 
-    // Counter the group scale (prevents squish/stretch)
-    t.scaleX(1 / sx);
-    t.scaleY(1 / sy);
-
-    // Optional: keep label from getting blurry while scaling
-    // by snapping to pixel-ish values:
-    // t.scaleX(Math.round((1 / sx) * 1000) / 1000);
-    // t.scaleY(Math.round((1 / sy) * 1000) / 1000);
-
+    t.rotation(-g.rotation());
     t.getLayer()?.batchDraw();
-  });
-  
+  }, []);
+
+  const transformStartRef = useRef<{ x: number; y: number } | null>(null);
+
   const s = props.item.style;
   const fill = rgba(s.fill, s.fillOpacity);
   const stroke = rgba(s.stroke, s.strokeOpacity);
   const shadow = s.shadow;
   const shadowColor = shadow ? rgba(shadow.color, shadow.opacity) : "transparent";
-  const plants = props.item.meta.plants ?? [];
-  const plantAccent = plants[0]?.color ?? "#5e7658";
+
+  const treeVariant = props.item.meta?.tree?.variant ?? "tree-01";
+  const treeImg = props.treeImages?.[treeVariant];
 
   const isSelected = props.selected;
-
   const radiusMax = Math.min(props.item.w, props.item.h) / 2;
 
-  // Calm UI: label only when selected / hovered / zoomed in
   const showLabel = isSelected || hovered || props.stageScale > 0.9;
 
   // Center pivot
@@ -1421,10 +1586,7 @@ function ItemNode(props: {
     ? ([perCorner.tl, perCorner.tr, perCorner.br, perCorner.bl] as any)
     : clamp(s.radius ?? 0, 0, radiusMax);
 
-  const showCorners =
-    isSelected &&
-    !props.locked &&
-    !isPillLike(props.item); // keep pills simple
+  const showCorners = isSelected && !props.locked && !isPillLike(props.item);
 
   // Render priority: bezier > curvature > polygon > defaults
   const showBezier = Boolean(props.item.meta.bezier);
@@ -1439,29 +1601,41 @@ function ItemNode(props: {
       offsetX={cx}
       offsetY={cy}
       rotation={props.item.r}
-      draggable={!props.locked}
+      // ✅ panMode disables item dragging (so you can pan over items)
+      draggable={!props.locked && !props.panMode}
       opacity={props.locked ? 0.92 : 1}
-      onClick={(e) => props.onSelect({ shiftKey: e.evt.shiftKey })}
-      onTap={() => props.onSelect({ shiftKey: false })}
-      onDragMove={() => props.onSelectionUI()}
+      onClick={(e) => {
+        // ✅ prevent stage pan logic from treating this as background
+        e.cancelBubble = true;
+        props.onSelect({ shiftKey: Boolean(e.evt?.shiftKey) });
+      }}
+      onTap={(e) => {
+        e.cancelBubble = true;
+        props.onSelect({ shiftKey: false });
+      }}
+      onDragMove={(e) => {
+        e.cancelBubble = true;
+        props.onSelectionUI();
+      }}
       onDragEnd={(e) => {
+        e.cancelBubble = true;
         const nx = e.target.x() - cx;
         const ny = e.target.y() - cy;
         props.onCommit({ x: nx, y: ny });
       }}
       onTransformStart={(e) => {
+        e.cancelBubble = true;
         const node = e.target as Konva.Group;
         transformStartRef.current = { x: node.x(), y: node.y() }; // center point
       }}
       onTransform={() => {
         const node = groupRef.current;
-        if (node && transformStartRef.current) {
-          node.position(transformStartRef.current);
-        }
+        if (node && transformStartRef.current) node.position(transformStartRef.current);
         keepLabelReadable();
         props.onSelectionUI();
       }}
       onTransformEnd={(e) => {
+        e.cancelBubble = true;
         const node = e.target as Konva.Group;
 
         const start = transformStartRef.current ?? { x: node.x(), y: node.y() };
@@ -1475,22 +1649,18 @@ function ItemNode(props: {
         const nextCx = nextW / 2;
         const nextCy = nextH / 2;
 
-        // reset scale back to 1 (we bake it into w/h)
         node.scaleX(1);
         node.scaleY(1);
-
-        // force center back to the pinned center
         node.position(start);
 
         const topLeftX = start.x - nextCx;
         const topLeftY = start.y - nextCy;
 
         transformStartRef.current = null;
-        // ✅ reset label local scale back to normal after bake
+
         if (textRef.current) {
           textRef.current.scaleX(1);
           textRef.current.scaleY(1);
-          // textRef.current.rotation(0); // only if you used the "upright" option above
         }
 
         props.onCommit({
@@ -1501,10 +1671,9 @@ function ItemNode(props: {
           r: node.rotation(),
         });
       }}
-
       onMouseEnter={() => {
         setHovered(true);
-        if (!props.locked && isSelected) props.setWrapCursor("default");
+        props.setWrapCursor("default");
       }}
       onMouseLeave={() => {
         setHovered(false);
@@ -1564,7 +1733,7 @@ function ItemNode(props: {
         />
       ) : isRectLike(props.item) ? (
         <Group>
-          {/* Contact shadow / soil compression (AO) */}
+          {/* AO shadow */}
           <Rect
             x={2.5}
             y={3.5}
@@ -1576,15 +1745,17 @@ function ItemNode(props: {
             listening={false}
           />
 
-          {/* Main bed */}
           <Rect
             ref={rectRef}
             width={props.item.w}
             height={props.item.h}
-            fill={fill}
-            stroke={isSelected ? "rgba(15,23,42,0.28)" : stroke}
-            strokeWidth={isSelected ? 1.4 : s.strokeWidth}
             cornerRadius={rectCornerRadius}
+            fill={isBed ? undefined : fill}
+            fillPatternImage={isBed ? (props.soilImg ?? undefined) : undefined}
+            fillPatternRepeat={isBed ? "repeat" : undefined}
+            fillPatternScale={isBed ? { x: 0.55, y: 0.55 } : undefined}
+            stroke={isSelected ? "rgba(15,23,42,0.22)" : stroke}
+            strokeWidth={isSelected ? 1.4 : s.strokeWidth}
             shadowColor={shadowColor}
             shadowBlur={shadow?.blur ?? 10}
             shadowOpacity={0.32}
@@ -1593,7 +1764,25 @@ function ItemNode(props: {
             shadowEnabled
           />
 
-          {/* Sun rim highlight (gives “thickness”) */}
+          {isBed ? (
+            <Rect
+              width={props.item.w}
+              height={props.item.h}
+              cornerRadius={rectCornerRadius}
+              fillLinearGradientStartPoint={{ x: 0, y: 0 }}
+              fillLinearGradientEndPoint={{ x: 0, y: props.item.h }}
+              fillLinearGradientColorStops={[
+                0, "rgba(255,255,255,0.10)",
+                0.5, "rgba(255,255,255,0.02)",
+                1, "rgba(0,0,0,0.18)",
+              ]}
+              opacity={0.6}
+              listening={false}
+            />
+          ) : null}
+          
+          
+
           <Rect
             width={props.item.w}
             height={props.item.h}
@@ -1603,26 +1792,48 @@ function ItemNode(props: {
             listening={false}
           />
         </Group>
-      ) : (
+      ) : isTree(props.item) ? (
+        <Group>
+          {/* ✅ HIT AREA so the Group can be clicked/dragged.
+              Must not be fully transparent or Konva won’t hit-test it. */}
+          <Rect
+            x={0}
+            y={0}
+            width={props.item.w}
+            height={props.item.h}
+            fill="rgba(0,0,0,0.001)"
+            listening={true}
+          />      
 
+          {/* ✅ Remove the “figure under the tree” (your ellipse shadow)
+              If you want a shadow later, we’ll add a softer one. */}     
+
+          {/* Tree SVG */}
+          {treeImg ? (
+            <KonvaImage
+              x={0}
+              y={0}
+              width={props.item.w}
+              height={props.item.h}
+              image={treeImg}
+              listening={false} // image never steals events; hit-rect does
+            />
+          ) : null}
+        </Group>
+      ) : (     
+    
         <Ellipse
           x={props.item.w / 2}
-          y={props.item.h / 2}
-          radiusX={props.item.w / 2}
-          radiusY={props.item.h / 2}
-          fill={fill}
-          stroke={isSelected ? "rgba(15,23,42,0.28)" : stroke}
-          strokeWidth={isSelected ? 1.4 : s.strokeWidth}
-          shadowColor={shadowColor}
-          shadowBlur={shadow?.blur ?? 10}
-          shadowOffsetX={shadow?.offsetX ?? 0}
-          shadowOffsetY={shadow?.offsetY ?? 10}
-          shadowEnabled
+          y={props.item.h / 2 + props.item.h * 0.08}
+          radiusX={props.item.w * 0.28}
+          radiusY={props.item.h * 0.22}
+          fill="rgba(15,23,42,0.04)"
+          listening={false}
         />
+
       )}
 
-
-      {showLabel ? (
+      {showLabel && !isTree(props.item) ? (
         <Text
           ref={textRef}
           x={14}
@@ -1635,40 +1846,26 @@ function ItemNode(props: {
         />
       ) : null}
 
-      {props.locked ? (
-        <Text
-          x={props.item.w - 22}
-          y={10}
-          text="🔒"
-          fontSize={12}
-          listening={false}
-          opacity={0.7}
-        />
-      ) : null}
 
-      {/* ✅ Illustrator-grade corners: live Konva transforms, commit on mouseup */}
+      {props.locked ? <Text x={props.item.w - 22} y={10} text="🔒" fontSize={12} listening={false} opacity={0.7} /> : null}
+
+      {/* Corner handles */}
       {showCorners ? (
         <CornerSmartHandlesPro
           w={props.item.w}
           h={props.item.h}
           groupRef={groupRef}
-          currentRotation={props.item.r}
           minSize={24}
           setWrapCursor={props.setWrapCursor}
           onSelectionUI={props.onSelectionUI}
           onCommit={(patch) => props.onCommit(patch)}
           isCoarse={props.isCoarse}
+          lockAspect={isTree(props.item)}
         />
       ) : null}
 
-      {/* ✅ Live Corners edit (rect-like only, and only when no other geometry is present) */}
-      {isSelected &&
-      !props.locked &&
-      props.editMode === "corners" &&
-      isRectLike(props.item) &&
-      !showBezier &&
-      !showCurv &&
-      !showPoly ? (
+      {/* Live corners edit (rect only, only when no other geometry) */}
+      {isSelected && !props.locked && props.editMode === "corners" && isRectLike(props.item) && !showBezier && !showCurv && !showPoly ? (
         <LiveCornersOverlay
           w={props.item.w}
           h={props.item.h}
@@ -1677,56 +1874,38 @@ function ItemNode(props: {
           cornerRadii={perCorner}
           onCommit={(next) => {
             if ("uniform" in next) {
-              props.onCommit({
-                style: { ...props.item.style, radius: next.uniform },
-                meta: { ...props.item.meta, cornerRadii: undefined },
-              });
+              props.onCommit({ style: { ...props.item.style, radius: next.uniform }, meta: { ...props.item.meta, cornerRadii: undefined } });
             } else {
-              props.onCommit({
-                meta: { ...props.item.meta, cornerRadii: next.corners },
-              });
+              props.onCommit({ meta: { ...props.item.meta, cornerRadii: next.corners } });
             }
           }}
         />
       ) : null}
 
-      {/* ✅ Curvature (Illustrator Curvature-like): anchors only, auto-smooth */}
-      {isSelected &&
-      !props.locked &&
-      props.editMode === "curvature" &&
-      (props.item.meta.curvature || draftCurv) ? (
+      {/* Curvature editor */}
+      {isSelected && !props.locked && props.editMode === "curvature" && (props.item.meta.curvature || draftCurv) ? (
         <CurvatureEditorOverlay
           w={props.item.w}
           h={props.item.h}
           path={(draftCurv ?? props.item.meta.curvature)!}
           onDraft={(d) => setDraftCurv(d)}
-          onCommit={(d) => {
-            props.onCommit({ meta: { ...props.item.meta, curvature: d } });
-          }}
+          onCommit={(d) => props.onCommit({ meta: { ...props.item.meta, curvature: d } })}
         />
       ) : null}
 
-      {/* ✅ Polygon: vertices only */}
-      {isSelected &&
-      !props.locked &&
-      props.editMode === "polygon" &&
-      (props.item.meta.polygon || draftPoly) ? (
+      {/* Polygon editor */}
+      {isSelected && !props.locked && props.editMode === "polygon" && (props.item.meta.polygon || draftPoly) ? (
         <PolygonEditorOverlay
           w={props.item.w}
           h={props.item.h}
           path={(draftPoly ?? props.item.meta.polygon)!}
           onDraft={(d) => setDraftPoly(d)}
-          onCommit={(d) => {
-            props.onCommit({ meta: { ...props.item.meta, polygon: d } });
-          }}
+          onCommit={(d) => props.onCommit({ meta: { ...props.item.meta, polygon: d } })}
         />
       ) : null}
 
-      {/* ✅ Bezier editor (advanced) */}
-      {isSelected &&
-      !props.locked &&
-      props.editMode === "bezier" &&
-      props.item.meta.bezier ? (
+      {/* Bezier editor */}
+      {isSelected && !props.locked && props.editMode === "bezier" && props.item.meta.bezier ? (
         <BezierEditorOverlay
           w={props.item.w}
           h={props.item.h}
@@ -1739,13 +1918,7 @@ function ItemNode(props: {
 }
 
 const ItemNodeMemo = React.memo(ItemNode, (a, b) => {
-  return (
-    a.item === b.item &&
-    a.selected === b.selected &&
-    a.locked === b.locked &&
-    a.stageScale === b.stageScale &&
-    a.editMode === b.editMode
-  );
+  return a.item === b.item && a.selected === b.selected && a.locked === b.locked && a.stageScale === b.stageScale && a.editMode === b.editMode && a.panMode === b.panMode;
 });
 
 /* ---------------- Shapes ---------------- */
@@ -1777,7 +1950,6 @@ function BezierShape(props: {
         }
 
         const firstLocal = bezierToLocal({ x: pts[0].x, y: pts[0].y }, w, h);
-
         ctx.beginPath();
         ctx.moveTo(firstLocal.x, firstLocal.y);
 
@@ -1790,7 +1962,6 @@ function BezierShape(props: {
           const aLocal = bezierToLocal({ x: a.x, y: a.y }, w, h);
           const bLocal = bezierToLocal({ x: b.x, y: b.y }, w, h);
 
-          // If handle missing, use the anchor (prevents inverse corners)
           const h1 = a.out ? bezierToLocal(a.out, w, h) : aLocal;
           const h2 = b.in ? bezierToLocal(b.in, w, h) : bLocal;
 
@@ -1841,20 +2012,13 @@ function CurvatureShape(props: {
           return;
         }
 
-        const localPts = pts.map((p) => ({
-          x: p.x * w,
-          y: p.y * h,
-          corner: p.corner,
-        }));
-
+        const localPts = pts.map((p) => ({ x: p.x * w, y: p.y * h, corner: p.corner }));
         const segs = catmullRomToBezierSegments(localPts, curv.closed, curv.tension ?? 1);
         if (!segs.length) return;
 
         ctx.beginPath();
         ctx.moveTo(segs[0].p1.x, segs[0].p1.y);
-        for (const s of segs) {
-          ctx.bezierCurveTo(s.c1.x, s.c1.y, s.c2.x, s.c2.y, s.p2.x, s.p2.y);
-        }
+        for (const s of segs) ctx.bezierCurveTo(s.c1.x, s.c1.y, s.c2.x, s.c2.y, s.p2.x, s.p2.y);
         if (curv.closed) ctx.closePath();
         ctx.fillStrokeShape(shape);
       }}
@@ -1899,9 +2063,7 @@ function PolygonShape(props: {
 
         ctx.beginPath();
         ctx.moveTo(pts[0].x * w, pts[0].y * h);
-        for (let i = 1; i < pts.length; i++) {
-          ctx.lineTo(pts[i].x * w, pts[i].y * h);
-        }
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x * w, pts[i].y * h);
         if (poly.closed) ctx.closePath();
         ctx.fillStrokeShape(shape);
       }}
@@ -1917,25 +2079,25 @@ function PolygonShape(props: {
   );
 }
 
-/* ---------------- Illustrator-grade corner handles (no store writes during drag) ---------------- */
+/* ---------------- Corner Handles (stable, commit-only) ---------------- */
 
 function CornerSmartHandlesPro(props: {
   w: number;
   h: number;
   groupRef: React.RefObject<Konva.Group | null>;
-  currentRotation: number;
   minSize: number;
   setWrapCursor: (cursor: string) => void;
   onSelectionUI: () => void;
   onCommit: (patch: Partial<StudioItem>) => void;
   isCoarse: boolean;
-  
+
+  // ✅ new: keep aspect ratio (perfect for trees)
+  lockAspect?: boolean;
 }) {
+
   const knobR = props.isCoarse ? 9 : 6;
   const rotateRing = props.isCoarse ? 28 : 18;
-  // also consider:
   const hitStroke = props.isCoarse ? rotateRing * 2.4 : rotateRing * 2;
-  const [hoverRotateCorner, setHoverRotateCorner] = useState<CornerKey | null>(null);
 
   const corners = [
     { key: "tl", x: 0, y: 0 },
@@ -1947,7 +2109,8 @@ function CornerSmartHandlesPro(props: {
   type CornerKey = (typeof corners)[number]["key"];
   type DragMode = "none" | "rotate" | "resize";
 
-  // Shift snapping
+  const [hoverRotateCorner, setHoverRotateCorner] = useState<CornerKey | null>(null);
+
   const shiftDownRef = useRef(false);
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -1967,40 +2130,18 @@ function CornerSmartHandlesPro(props: {
   const dragRef = useRef<{
     mode: DragMode;
     corner: CornerKey;
-
     startW: number;
     startH: number;
     startRotation: number;
-
-    // stable anchor references
     startCenterWorld: { x: number; y: number };
     startCenterParent: { x: number; y: number };
     startAngleParent: number;
-
-    // for cancel restore
     startScaleX: number;
     startScaleY: number;
     startAbsPos: { x: number; y: number };
   } | null>(null);
 
   const cleanupRef = useRef<(() => void) | null>(null);
-
-  /* ---------- helpers ---------- */
-  function counterScaleLabel(g: Konva.Group) {
-    // safest: string selector (no predicate, no implicit-any)
-    const t = g.findOne("Text") as Konva.Text | null;
-    if (!t) return; 
-
-    const sx = g.scaleX();
-    const sy = g.scaleY();  
-
-    if (Math.abs(sx) > 1e-6) t.scaleX(1 / sx);
-    if (Math.abs(sy) > 1e-6) t.scaleY(1 / sy);  
-
-    t.getLayer()?.batchDraw();
-  } 
-
-
 
   function stagePointerWorld(): { x: number; y: number } | null {
     const g = props.groupRef.current;
@@ -2014,6 +2155,26 @@ function CornerSmartHandlesPro(props: {
     const parent = g.getParent();
     if (!parent) return null;
     return parent.getAbsoluteTransform().copy().invert();
+  }
+  
+    const labelRef = useRef<Konva.Text | null>(null);
+
+  function getLabel(g: Konva.Group) {
+    if (labelRef.current) return labelRef.current;
+    labelRef.current = g.findOne("Text") as Konva.Text | null;
+    return labelRef.current;
+  }
+
+  function counterScaleLabel(g: Konva.Group) {
+    const t = getLabel(g);
+    if (!t) return;
+
+    const sx = g.scaleX();
+    const sy = g.scaleY();
+    if (Math.abs(sx) > 1e-6) t.scaleX(1 / sx);
+    if (Math.abs(sy) > 1e-6) t.scaleY(1 / sy);
+    t.rotation(-g.rotation());
+    t.getLayer()?.batchDraw();
   }
 
   function pointerParent(): { x: number; y: number } | null {
@@ -2052,12 +2213,7 @@ function CornerSmartHandlesPro(props: {
   }
 
   function isOutsideRect(local: { x: number; y: number }, pad = 2) {
-    return (
-      local.x < -pad ||
-      local.y < -pad ||
-      local.x > props.w + pad ||
-      local.y > props.h + pad
-    );
+    return local.x < -pad || local.y < -pad || local.x > props.w + pad || local.y > props.h + pad;
   }
 
   function cornerDist(local: { x: number; y: number }, corner: { x: number; y: number }) {
@@ -2069,13 +2225,18 @@ function CornerSmartHandlesPro(props: {
     return "nesw-resize";
   }
 
-  // Rock-solid center lock in WORLD space
-  function forceCenterLock(g: Konva.Group, desiredCenterWorld: { x: number; y: number }) {
+    // Rock-solid center lock in WORLD space (no drift, no jump)
+  function forceCenterLock(
+    g: Konva.Group,
+    desiredCenterWorld: { x: number; y: number }
+  ) {
+    // We move the group's *absolute* position by the delta between
+    // current world-center and desired world-center.
     const t = g.getAbsoluteTransform();
-    const curCenter = t.point({ x: props.w / 2, y: props.h / 2 });
+    const curCenterWorld = t.point({ x: props.w / 2, y: props.h / 2 });
 
-    const dx = desiredCenterWorld.x - curCenter.x;
-    const dy = desiredCenterWorld.y - curCenter.y;
+    const dx = desiredCenterWorld.x - curCenterWorld.x;
+    const dy = desiredCenterWorld.y - curCenterWorld.y;
 
     const abs = g.absolutePosition();
     g.absolutePosition({ x: abs.x + dx, y: abs.y + dy });
@@ -2085,63 +2246,70 @@ function CornerSmartHandlesPro(props: {
     const g = props.groupRef.current;
     const st = dragRef.current;
 
+    // clear drag state first (prevents re-entrancy weirdness)
     dragRef.current = null;
+    setHoverRotateCorner(null);
     props.setWrapCursor("default");
 
+    // remove listeners
     if (cleanupRef.current) cleanupRef.current();
     cleanupRef.current = null;
 
     if (!g || !st) return;
 
-    if (commit) {
-      const finalRot = g.rotation();
-      const sx = g.scaleX();
-      const sy = g.scaleY();
+    // always re-enable dragging
+    g.draggable(true);
 
-      const nextW = Math.max(props.minSize, st.startW * sx);
-      const nextH = Math.max(props.minSize, st.startH * sy);
-
-      // compute stable top-left from the locked center (in parent coords)
-      const lockedCenterW = st.startCenterWorld;
-      const inv = parentInvTransform();
-      const lockedCenterP = inv ? inv.point(lockedCenterW) : lockedCenterW;
-
-      const nextX = lockedCenterP.x - nextW / 2;
-      const nextY = lockedCenterP.y - nextH / 2;
-
-      // bake scale into w/h
-      g.scaleX(1);
-      g.scaleY(1);
-      g.rotation(finalRot);
-
-      // keep center visually stable
-      g.position({ x: lockedCenterP.x, y: lockedCenterP.y });
-
-      g.getLayer()?.batchDraw();
-
-      props.onCommit({
-        x: nextX,
-        y: nextY,
-        w: nextW,
-        h: nextH,
-        r: finalRot,
-      });
-    } else {
-      // cancel restore: rotation/scale/position
+    if (!commit) {
+      // cancel: restore *exact* start state
       g.rotation(st.startRotation);
       g.scaleX(st.startScaleX);
       g.scaleY(st.startScaleY);
       g.absolutePosition(st.startAbsPos);
 
-      // also re-lock to original center to avoid any drift
+      // hard re-lock to original center (in case anything moved 1px)
       forceCenterLock(g, st.startCenterWorld);
 
       g.getLayer()?.batchDraw();
+      props.onSelectionUI();
+      return;
     }
 
-    // always restore draggable
-    g.draggable(true);
+    // commit: bake scale into w/h, keep rotation, compute new top-left from locked center
+    const sx = g.scaleX();
+    const sy = g.scaleY();
+
+    const nextW = Math.max(props.minSize, st.startW * sx);
+    const nextH = Math.max(props.minSize, st.startH * sy);
+
+    // Convert the locked world-center into parent coords (because item x/y are in parent coords)
+    const inv = parentInvTransform();
+    const lockedCenterP = inv ? inv.point(st.startCenterWorld) : st.startCenterWorld;
+
+    const nextX = lockedCenterP.x - nextW / 2;
+    const nextY = lockedCenterP.y - nextH / 2;
+
+    const finalRot = g.rotation();
+
+    // IMPORTANT: reset live transforms on the node to avoid "double scaling" glitches.
+    // Let React re-render apply the new w/h and reposition.
+    g.scaleX(1);
+    g.scaleY(1);
+
+    // Keep the node visually stable until React applies new props:
+    // Re-lock center in world-space after reset.
+    forceCenterLock(g, st.startCenterWorld);
+
+    g.getLayer()?.batchDraw();
     props.onSelectionUI();
+
+    props.onCommit({
+      x: nextX,
+      y: nextY,
+      w: nextW,
+      h: nextH,
+      r: finalRot,
+    });
   }
 
   function beginDrag(mode: DragMode, corner: CornerKey) {
@@ -2152,7 +2320,6 @@ function CornerSmartHandlesPro(props: {
     const cW = centerWorld();
     const cP = centerParent();
     const pP = pointerParent();
-
     if (!cW || !cP || !pP) return;
 
     dragRef.current = {
@@ -2169,11 +2336,14 @@ function CornerSmartHandlesPro(props: {
       startAbsPos: g.absolutePosition(),
     };
 
-    // lock group dragging while resizing/rotating via handles
+    // prevent the group itself from dragging while we manipulate handles
     g.draggable(false);
 
     if (mode === "rotate") props.setWrapCursor(ROTATE_CURSOR);
     if (mode === "resize") props.setWrapCursor(cursorForCornerResize(corner));
+
+    // Use namespaced events so we never accidentally nuke other listeners.
+    const NS = ".cornerHandlesPro";
 
     const onMove = () => {
       const st = dragRef.current;
@@ -2191,7 +2361,7 @@ function CornerSmartHandlesPro(props: {
 
         g.rotation(nextRot);
 
-        // keep center stable in world space
+        // keep center stable in world space (no orbiting/jitter)
         forceCenterLock(g, st.startCenterWorld);
 
         g.getLayer()?.batchDraw();
@@ -2203,20 +2373,33 @@ function CornerSmartHandlesPro(props: {
         const pW = stagePointerWorld();
         if (!pW) return;
 
-        // resize from center in local-rotation space (stable)
-        const vWorld = { x: pW.x - st.startCenterWorld.x, y: pW.y - st.startCenterWorld.y };
+        // Resize from center in the item's local rotation space (stable & smooth)
+        const vWorld = {
+          x: pW.x - st.startCenterWorld.x,
+          y: pW.y - st.startCenterWorld.y,
+        };
         const vLocal = rotateVec(vWorld, -st.startRotation);
 
-        const halfW = Math.max(props.minSize / 2, Math.abs(vLocal.x));
-        const halfH = Math.max(props.minSize / 2, Math.abs(vLocal.y));
+        // symmetric scaling: absolute local vector defines half extents
+        let halfW = Math.max(props.minSize / 2, Math.abs(vLocal.x));
+        let halfH = Math.max(props.minSize / 2, Math.abs(vLocal.y));
+
+        if (props.lockAspect) {
+          const half = Math.max(halfW, halfH);
+          halfW = half;
+          halfH = half;
+        }
 
         const nextW = halfW * 2;
         const nextH = halfH * 2;
-
+        
         g.scaleX(nextW / st.startW);
         g.scaleY(nextH / st.startH);
+
+        // keep label readable (no squish)
         counterScaleLabel(g);
 
+        // keep center locked (prevents “jump”)
         forceCenterLock(g, st.startCenterWorld);
 
         g.getLayer()?.batchDraw();
@@ -2230,13 +2413,12 @@ function CornerSmartHandlesPro(props: {
       if (ev.key === "Escape") endDrag(false);
     };
 
-    stage.on("mousemove touchmove", onMove);
-    stage.on("mouseup touchend", onUp);
+    stage.on(`mousemove${NS} touchmove${NS}`, onMove);
+    stage.on(`mouseup${NS} touchend${NS} touchcancel${NS}`, onUp);
     window.addEventListener("keydown", onKey);
 
     cleanupRef.current = () => {
-      stage.off("mousemove touchmove", onMove);
-      stage.off("mouseup touchend", onUp);
+      stage.off(NS); // removes only our namespaced listeners
       window.removeEventListener("keydown", onKey);
     };
   }
@@ -2246,80 +2428,125 @@ function CornerSmartHandlesPro(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return (
-    <Group listening>
-      {corners.map((c) => (
-        <Group key={c.key}>
-          {/* Rotation ring hint */}
-          {hoverRotateCorner === c.key ? (
-          <Circle
-            x={c.x}
-            y={c.y}
-            radius={rotateRing}
-            stroke="rgba(111, 102, 255, 0.35)"
-            strokeWidth={2}
-            dash={[6, 6]}
-            listening={false}
-          />
-          ) : null} 
+    return (
+      <Group listening>
+        {corners.map((c) => (
+          <Group key={c.key}>
+            {/* ✅ Invisible hover zone for rotation (so it works even on trees) */}
+            <Circle
+              x={c.x}
+              y={c.y}
+              radius={rotateRing}
+              fill="rgba(0,0,0,0.001)" // must not be fully transparent
+              listening
+              onMouseMove={() => {
+                if (dragRef.current) return;
 
-          {/* Corner knob */}
-          <Circle
-            x={c.x}
-            y={c.y}
-            radius={knobR}
-            fill="rgba(255,255,255,0.98)"
-            stroke="rgba(111, 102, 255, 0.65)"
-            strokeWidth={1.2}
-            shadowColor="rgba(111, 102, 255, 0.22)"
-            shadowBlur={10}
-            shadowOffsetX={0}
-            shadowOffsetY={6}
-            hitStrokeWidth={hitStroke}
-            onMouseMove={() => {
-              if (dragRef.current) return;
-              const local = pointerToLocal();
-              if (!local) return; 
+                const local = pointerToLocal();
+                if (!local) return;
 
-              const d = cornerDist(local, c);
-              const outside = isOutsideRect(local, 2);  
+                const d = cornerDist(local, c);
+                const outside = isOutsideRect(local, 2);
 
-              if (d <= knobR + 2) {
+                // For trees (lockAspect), allow rotate even if "inside" the hit-rect.
+                // Beds keep the stricter "outside" rule.
+                const canRotateHere = d > knobR + 2 && d <= rotateRing && (props.lockAspect ? true : outside);
+
+                if (canRotateHere) {
+                  setHoverRotateCorner(c.key);
+                  props.setWrapCursor(ROTATE_CURSOR);
+                } else {
+                  // don't force-hide if user is on the resize knob
+                  if (d <= knobR + 2) {
+                    setHoverRotateCorner(null);
+                    props.setWrapCursor(cursorForCornerResize(c.key));
+                  } else {
+                    setHoverRotateCorner(null);
+                    props.setWrapCursor("default");
+                  }
+                }
+              }}
+              onMouseLeave={() => {
+                if (!dragRef.current) props.setWrapCursor("default");
                 setHoverRotateCorner(null);
+              }}
+              onMouseDown={(e) => {
+                e.cancelBubble = true;
+                if (dragRef.current) return;
+
+                const local = pointerToLocal();
+                if (!local) return;
+
+                const d = cornerDist(local, c);
+                const outside = isOutsideRect(local, 2);
+                const canRotateHere = d > knobR + 2 && d <= rotateRing && (props.lockAspect ? true : outside);
+
+                if (canRotateHere) beginDrag("rotate", c.key);
+              }}
+              onTouchStart={(e) => {
+                e.cancelBubble = true;
+                if (dragRef.current) return;
+
+                const local = pointerToLocal();
+                if (!local) return;
+
+                const d = cornerDist(local, c);
+                const outside = isOutsideRect(local, 2);
+                const canRotateHere = d > knobR + 2 && d <= rotateRing && (props.lockAspect ? true : outside);
+
+                if (canRotateHere) beginDrag("rotate", c.key);
+              }}
+            />
+
+            {/* Rotation ring hint (visible) */}
+            {hoverRotateCorner === c.key ? (
+              <Circle
+                x={c.x}
+                y={c.y}
+                radius={rotateRing}
+                stroke="rgba(111, 102, 255, 0.35)"
+                strokeWidth={2}
+                dash={[6, 6]}
+                listening={false}
+              />
+            ) : null}
+
+            {/* Resize knob */}
+            <Circle
+              x={c.x}
+              y={c.y}
+              radius={knobR}
+              fill="rgba(255,255,255,0.98)"
+              stroke="rgba(111, 102, 255, 0.65)"
+              strokeWidth={1.2}
+              shadowColor="rgba(111, 102, 255, 0.22)"
+              shadowBlur={10}
+              shadowOffsetX={0}
+              shadowOffsetY={6}
+              hitStrokeWidth={hitStroke}
+              onMouseMove={() => {
+                if (dragRef.current) return;
                 props.setWrapCursor(cursorForCornerResize(c.key));
-              } else if (d <= rotateRing && outside) {
-                setHoverRotateCorner(c.key);
-                props.setWrapCursor(ROTATE_CURSOR);
-              } else {
                 setHoverRotateCorner(null);
-                props.setWrapCursor("default");
-              }
-            }}
-            onMouseLeave={() => {
-              if (!dragRef.current) props.setWrapCursor("default");
-              setHoverRotateCorner(null);
-            }}
-            onMouseDown={() => {
-              const local = pointerToLocal();
-              if (!local) return; 
-
-              const d = cornerDist(local, c);
-              const outside = isOutsideRect(local, 2);  
-
-              const mode: DragMode =
-                d <= knobR + 2 ? "resize" : d <= rotateRing && outside ? "rotate" : "none"; 
-
-              if (mode === "none") return;
-              beginDrag(mode, c.key);
-            }}
-          />
-        </Group>
-      ))}
-    </Group>
-  );  
+              }}
+              onMouseLeave={() => {
+                if (!dragRef.current) props.setWrapCursor("default");
+              }}
+              onMouseDown={(e) => {
+                e.cancelBubble = true;
+                beginDrag("resize", c.key);
+              }}
+              onTouchStart={(e) => {
+                e.cancelBubble = true;
+                beginDrag("resize", c.key);
+              }}
+            />
+          </Group>
+        ))}
+      </Group>
+    );
 
 }
-
 
 /* ---------------- Live Corners (sleek rectangle curve edit) ---------------- */
 

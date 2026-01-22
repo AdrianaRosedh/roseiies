@@ -1,6 +1,6 @@
 // apps/studio/app/studio/editor-core/types.ts
 
-export type ItemType = "bed" | "zone" | "path" | "structure" | "label";
+export type ItemType = "bed" | "tree" | "zone" | "path" | "structure" | "label";
 
 export type Swatch = { name: string; value: string };
 
@@ -117,6 +117,17 @@ export type StudioItem = {
 
     // ✅ Live Corners per-corner mode
     cornerRadii?: CornerRadii;
+
+    // ✅ Trees
+    tree?: {
+      species?: string; // e.g. "Olivo", "Citrus"
+      canopyM?: number; // optional (later mapping to pixels)
+      note?: string;
+
+      // SVG name WITHOUT extension, stored in public/images/trees/
+      // e.g. "tree-01" or "citrus"
+      variant?: string;
+    };
   };
 
   style: ItemStyle;

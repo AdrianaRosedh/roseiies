@@ -9,21 +9,19 @@ const ROSEIIES_SWATCHES: Swatch[] = [
   { name: "Sky", value: "#60a5fa" },
   { name: "Amber", value: "#f59e0b" },
   { name: "Violet", value: "#a855f7" },
-  { name: "Rose", value: "#fb7185" }
+  { name: "Rose", value: "#fb7185" },
 ];
 
 const GardenModule: StudioModule = {
   id: "garden",
   title: "Garden Layouts",
-  subtitle: "Design gardens, beds, zones, paths, and structures.",
+  subtitle: "Design beds + trees. Planting data maps dynamically inside beds.",
   swatches: ROSEIIES_SWATCHES,
 
+  // ✅ Only what you want right now
   tools: [
     { id: "bed", label: "Bed" },
-    { id: "zone", label: "Zone" },
-    { id: "path", label: "Path" },
-    { id: "structure", label: "Structure" },
-    { id: "label", label: "Label" }
+    { id: "tree", label: "Tree" },
   ],
 
   defaults: {
@@ -37,16 +35,29 @@ const GardenModule: StudioModule = {
         strokeOpacity: 0.22,
         strokeWidth: 1.4,
         radius: 16,
-        shadow: { color: "#000000", opacity: 0.10, blur: 14, offsetX: 0, offsetY: 10 }
+        shadow: { color: "#000000", opacity: 0.1, blur: 14, offsetX: 0, offsetY: 10 },
       },
+
+      // ✅ Tree style (stroke is mainly for selection; SVG will be the visual)
+      tree: {
+        fill: "#5e7658",
+        fillOpacity: 0.12,
+        stroke: "#0b1220",
+        strokeOpacity: 0.18,
+        strokeWidth: 1.2,
+        radius: 999,
+        shadow: { color: "#000000", opacity: 0.12, blur: 16, offsetX: 0, offsetY: 10 },
+      },
+
+      // legacy (kept so old docs still render if they exist)
       zone: {
         fill: "#60a5fa",
-        fillOpacity: 0.10,
+        fillOpacity: 0.1,
         stroke: "#60a5fa",
         strokeOpacity: 0.22,
         strokeWidth: 1.2,
         radius: 18,
-        shadow: { color: "#000000", opacity: 0.0, blur: 0, offsetX: 0, offsetY: 0 }
+        shadow: { color: "#000000", opacity: 0.0, blur: 0, offsetX: 0, offsetY: 0 },
       },
       path: {
         fill: "#0b1220",
@@ -55,7 +66,7 @@ const GardenModule: StudioModule = {
         strokeOpacity: 0.12,
         strokeWidth: 1.0,
         radius: 999,
-        shadow: { color: "#000000", opacity: 0.0, blur: 0, offsetX: 0, offsetY: 0 }
+        shadow: { color: "#000000", opacity: 0.0, blur: 0, offsetX: 0, offsetY: 0 },
       },
       structure: {
         fill: "#a855f7",
@@ -64,19 +75,19 @@ const GardenModule: StudioModule = {
         strokeOpacity: 0.25,
         strokeWidth: 1.2,
         radius: 18,
-        shadow: { color: "#000000", opacity: 0.08, blur: 12, offsetX: 0, offsetY: 8 }
+        shadow: { color: "#000000", opacity: 0.08, blur: 12, offsetX: 0, offsetY: 8 },
       },
       label: {
         fill: "#0b1220",
         fillOpacity: 0.04,
         stroke: "#0b1220",
-        strokeOpacity: 0.10,
+        strokeOpacity: 0.1,
         strokeWidth: 1.0,
         radius: 14,
-        shadow: { color: "#000000", opacity: 0.0, blur: 0, offsetX: 0, offsetY: 0 }
-      }
-    }
-  }
+        shadow: { color: "#000000", opacity: 0.0, blur: 0, offsetX: 0, offsetY: 0 },
+      },
+    },
+  },
 };
 
 export default GardenModule;
