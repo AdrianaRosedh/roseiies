@@ -9,7 +9,10 @@ export type GardenPlanting = {
   id: string;
   tenant_id: string;
   garden_id: string;
+
   bed_id: string;
+  zone_code: string | null;
+
   crop: string;
   status: string | null;
   planted_at: string | null;
@@ -32,7 +35,7 @@ export async function loadGardenPlantings(args: {
   const { data, error } = await supabase
     .from("garden_plantings")
     .select(
-      "id, tenant_id, garden_id, bed_id, crop, status, planted_at, pin_x, pin_y, guest_story, guest_facts, gardener_notes, kitchen_notes"
+      "id, tenant_id, garden_id, bed_id, zone_code, crop, status, planted_at, pin_x, pin_y, guest_story, guest_facts, gardener_notes, kitchen_notes"
     )
     .eq("tenant_id", tenantId)
     .eq("garden_id", gardenId);

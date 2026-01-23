@@ -1,13 +1,10 @@
+// apps/studio/app/studio/editor-core/canvas/item/ItemNode.tsx
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Group, Rect, Text, Ellipse, Image as KonvaImage } from "react-konva";
+import { Group, Text } from "react-konva";
 import type Konva from "konva";
 import type { CornerRadii, CurvaturePath, PolygonPath, StudioItem } from "../../types";
-
-import BezierShape from "./shapes/BezierShape";
-import CurvatureShape from "./shapes/CurvatureShape";
-import PolygonShape from "./shapes/PolygonShape";
 
 import CornerSmartHandlesPro from "./overlays/CornerSmartHandlesPro";
 import LiveCornersOverlay from "./overlays/LiveCornersOverlay";
@@ -15,30 +12,14 @@ import CurvatureEditorOverlay from "./overlays/CurvatureEditorOverlay";
 import PolygonEditorOverlay from "./overlays/PolygonEditorOverlay";
 import BezierEditorOverlay from "./overlays/BezierEditorOverlay";
 
-/* ---------------- Local utils ---------------- */
+import ItemBody from "./render/ItemBody";
 
-function clamp(n: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, n));
-}
+import { clamp, rgba } from "./utils/paint";
+import { isPillLike, isRectLike, isTree } from "./utils/predicates";
 
-function rgba(hex: string, opacity: number) {
-  const h = hex.replace("#", "").trim();
-  const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
-  const r = parseInt(full.slice(0, 2), 16);
-  const g = parseInt(full.slice(2, 4), 16);
-  const b = parseInt(full.slice(4, 6), 16);
-  return `rgba(${r},${g},${b},${opacity})`;
-}
-
-function isPillLike(item: StudioItem) {
-  return item.type === "path" || item.type === "label";
-}
-function isRectLike(item: StudioItem) {
-  return item.type === "bed" || item.type === "zone" || item.type === "structure";
-}
-function isTree(item: StudioItem) {
-  return item.type === "tree";
-}
+import { useSelectionUIRaf } from "./hooks/useSelectionUIRaf";
+import { useReadableLabel } from "./hooks/useReadableLabel";
+import { useKonvaCache } from "./hooks/useKonvaCache";
 
 export type EditMode = "none" | "corners" | "polygon" | "curvature" | "bezier";
 
@@ -78,8 +59,8 @@ function ItemNodeImpl(props: Props) {
   const groupRef = useRef<Konva.Group>(null);
   const rectRef = useRef<Konva.Rect>(null);
   const textRef = useRef<Konva.Text>(null);
-  const isBed = props.item.type === "bed";
 
+  const isBed = props.item.type === "bed";
   const [hovered, setHovered] = useState(false);
 
   // Draft geometry for edit modes (NO store writes during drag)
@@ -110,108 +91,22 @@ function ItemNodeImpl(props: Props) {
     else setDraftPoly(null);
   }, [props.selected, props.editMode, props.item.id]);
 
-  // ✅ Throttle selection UI updates to 1/frame (drag + transform get spammy)
-  const selRafRef = useRef<number | null>(null);
-  const selectionUIRaf = useCallback(() => {
-    if (selRafRef.current != null) return;
-    selRafRef.current = requestAnimationFrame(() => {
-      selRafRef.current = null;
-      props.onSelectionUI();
-    });
-  }, [props.onSelectionUI]);
+  // selection UI rAF throttle
+  const selectionUIRaf = useSelectionUIRaf(props.onSelectionUI);
 
-  useEffect(() => {
-    return () => {
-      if (selRafRef.current != null) cancelAnimationFrame(selRafRef.current);
-    };
-  }, []);
+  // label readable rAF helper
+  const keepLabelReadableRaf = useReadableLabel({ groupRef, textRef });
 
-  // Keep label readable only when group scaling changes (rAF, no forced batchDraw spam)
-  const labelRafRef = useRef<number | null>(null);
-  const keepLabelReadableRaf = useCallback(() => {
-    if (labelRafRef.current != null) return;
-    labelRafRef.current = requestAnimationFrame(() => {
-      labelRafRef.current = null;
-
-      const g = groupRef.current;
-      const t = textRef.current;
-      if (!g || !t) return;
-
-      const sx = g.scaleX();
-      const sy = g.scaleY();
-
-      if (Math.abs(sx) > 1e-6) t.scaleX(1 / sx);
-      if (Math.abs(sy) > 1e-6) t.scaleY(1 / sy);
-
-      t.rotation(-g.rotation());
-      // no batchDraw here; Konva will draw naturally via the transform cycle
-    });
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (labelRafRef.current != null) cancelAnimationFrame(labelRafRef.current);
-    };
-  }, []);
-
-  // ✅ Optional lightweight caching for non-selected items (huge win when many beds)
-  const cacheRafRef = useRef<number | null>(null);
-  useEffect(() => {
-    const g = groupRef.current;
-    if (!g) return;
-
-    const isSelected = props.selected;
-    const canCache =
-      !isSelected &&
-      !hovered &&
-      props.editMode === "none" &&
-      !props.panMode;
-
-    // avoid caching enormous nodes (memory spike)
-    const pxW = props.item.w * props.stageScale;
-    const pxH = props.item.h * props.stageScale;
-    const pxArea = pxW * pxH;
-    const CACHE_AREA_MAX = 1.2e6; // ~1.2 MP
-
-    const shouldCache =
-      canCache && pxArea > 0 && pxArea < CACHE_AREA_MAX;
-
-    if (cacheRafRef.current != null) {
-      cancelAnimationFrame(cacheRafRef.current);
-      cacheRafRef.current = null;
-    }
-
-    cacheRafRef.current = requestAnimationFrame(() => {
-      cacheRafRef.current = null;
-      try {
-        if (shouldCache) {
-          if (!g.isCached()) {
-            g.cache({ pixelRatio: 1 });
-            g.getLayer()?.batchDraw();
-          }
-        } else {
-          if (g.isCached()) {
-            g.clearCache();
-            g.getLayer()?.batchDraw();
-          }
-        }
-      } catch {
-        // ignore cache errors (rare, but can happen mid-destroy)
-      }
-    });
-
-    return () => {
-      if (cacheRafRef.current != null) cancelAnimationFrame(cacheRafRef.current);
-    };
-  }, [
-    props.selected,
+  // optional caching for non-selected, non-hovered nodes
+  useKonvaCache({
+    groupRef,
+    item: props.item,
+    selected: props.selected,
     hovered,
-    props.editMode,
-    props.panMode,
-    props.item.w,
-    props.item.h,
-    props.stageScale,
-  ]);
+    editMode: props.editMode,
+    panMode: props.panMode,
+    stageScale: props.stageScale,
+  });
 
   const transformStartRef = useRef<{ x: number; y: number } | null>(null);
 
@@ -244,6 +139,9 @@ function ItemNodeImpl(props: Props) {
   const showBezier = Boolean(props.item.meta.bezier);
   const showCurv = Boolean(draftCurv ?? props.item.meta.curvature);
   const showPoly = Boolean(draftPoly ?? props.item.meta.polygon);
+
+  const code = (props.item.meta as any)?.code as string | undefined;
+  const showCode = Boolean(code) && (isSelected || hovered || props.stageScale > 1.05);
 
   return (
     <Group
@@ -338,169 +236,43 @@ function ItemNodeImpl(props: Props) {
       }}
     >
       {/* ---- Body ---- */}
-      {showBezier ? (
-        <BezierShape
-          item={props.item}
-          fill={fill}
-          stroke={isSelected ? "rgba(15,23,42,0.28)" : stroke}
-          strokeWidth={isSelected ? 1.4 : s.strokeWidth}
-          shadowColor={shadowColor}
-          shadowBlur={shadow?.blur ?? 10}
-          shadowOffsetX={shadow?.offsetX ?? 0}
-          shadowOffsetY={shadow?.offsetY ?? 10}
-        />
-      ) : showCurv ? (
-        <CurvatureShape
-          item={props.item}
-          path={(draftCurv ?? props.item.meta.curvature)!}
-          fill={fill}
-          stroke={isSelected ? "rgba(15,23,42,0.28)" : stroke}
-          strokeWidth={isSelected ? 1.4 : s.strokeWidth}
-          shadowColor={shadowColor}
-          shadowBlur={shadow?.blur ?? 10}
-          shadowOffsetX={shadow?.offsetX ?? 0}
-          shadowOffsetY={shadow?.offsetY ?? 10}
-        />
-      ) : showPoly ? (
-        <PolygonShape
-          item={props.item}
-          path={(draftPoly ?? props.item.meta.polygon)!}
-          fill={fill}
-          stroke={isSelected ? "rgba(15,23,42,0.28)" : stroke}
-          strokeWidth={isSelected ? 1.4 : s.strokeWidth}
-          shadowColor={shadowColor}
-          shadowBlur={shadow?.blur ?? 10}
-          shadowOffsetX={shadow?.offsetX ?? 0}
-          shadowOffsetY={shadow?.offsetY ?? 10}
-        />
-      ) : isPillLike(props.item) ? (
-        <Rect
-          width={props.item.w}
-          height={props.item.h}
-          fill={fill}
-          stroke={isSelected ? "rgba(15,23,42,0.28)" : stroke}
-          strokeWidth={isSelected ? 1.4 : s.strokeWidth}
-          cornerRadius={Math.min(props.item.w, props.item.h) / 2}
-          shadowColor={shadowColor}
-          shadowBlur={shadow?.blur ?? 10}
-          shadowOpacity={0.35}
-          shadowOffsetX={shadow?.offsetX ?? 0}
-          shadowOffsetY={shadow?.offsetY ?? 10}
-          shadowEnabled
-          perfectDrawEnabled={false}
-        />
-      ) : isRectLike(props.item) ? (
-        <Group>
-          {/* AO shadow */}
-          <Rect
-            x={2.5}
-            y={3.5}
-            width={props.item.w - 5}
-            height={props.item.h - 5}
-            cornerRadius={rectCornerRadius}
-            fill="rgba(0,0,0,0.22)"
-            opacity={0.18}
-            listening={false}
-            perfectDrawEnabled={false}
-          />
+      <ItemBody
+        item={props.item}
+        isSelected={isSelected}
+        rectRef={rectRef}
+        fill={fill}
+        stroke={stroke}
+        shadowColor={shadowColor}
+        soilImg={props.soilImg}
+        treeImg={treeImg}
+        rectCornerRadius={rectCornerRadius}
+        draftCurv={draftCurv}
+        draftPoly={draftPoly}
+      />
 
-          <Rect
-            ref={rectRef}
-            width={props.item.w}
-            height={props.item.h}
-            cornerRadius={rectCornerRadius}
-            fill={isBed ? undefined : fill}
-            fillPatternImage={isBed ? (props.soilImg ?? undefined) : undefined}
-            fillPatternRepeat={isBed ? "repeat" : undefined}
-            fillPatternScale={isBed ? { x: 0.55, y: 0.55 } : undefined}
-            stroke={isSelected ? "rgba(15,23,42,0.22)" : stroke}
-            strokeWidth={isSelected ? 1.4 : s.strokeWidth}
-            shadowColor={shadowColor}
-            shadowBlur={shadow?.blur ?? 10}
-            shadowOpacity={0.32}
-            shadowOffsetX={shadow?.offsetX ?? 0}
-            shadowOffsetY={shadow?.offsetY ?? 10}
-            shadowEnabled
-            perfectDrawEnabled={false}
-          />
-
-          {isBed ? (
-            <Rect
-              width={props.item.w}
-              height={props.item.h}
-              cornerRadius={rectCornerRadius}
-              fillLinearGradientStartPoint={{ x: 0, y: 0 }}
-              fillLinearGradientEndPoint={{ x: 0, y: props.item.h }}
-              fillLinearGradientColorStops={[
-                0,
-                "rgba(255,255,255,0.10)",
-                0.5,
-                "rgba(255,255,255,0.02)",
-                1,
-                "rgba(0,0,0,0.18)",
-              ]}
-              opacity={0.6}
-              listening={false}
-              perfectDrawEnabled={false}
-            />
-          ) : null}
-
-          <Rect
-            width={props.item.w}
-            height={props.item.h}
-            cornerRadius={rectCornerRadius}
-            stroke="rgba(255,255,255,0.30)"
-            strokeWidth={1.6}
-            listening={false}
-            perfectDrawEnabled={false}
-          />
-        </Group>
-      ) : isTree(props.item) ? (
-        <Group>
-          {/* hit target */}
-          <Rect
+      {/* Label + code (subtle) */}
+      {showLabel ? (
+        <Group listening={false}>
+          <Text
+            ref={textRef}
             x={0}
-            y={0}
-            width={props.item.w}
-            height={props.item.h}
-            fill="rgba(0,0,0,0.001)"
-            listening
-            perfectDrawEnabled={false}
+            y={-22}
+            text={props.item.label || ""}
+            fontSize={12}
+            fill="rgba(15,23,42,0.65)"
+            listening={false}
           />
-          {treeImg ? (
-            <KonvaImage
+          {showCode ? (
+            <Text
               x={0}
-              y={0}
-              width={props.item.w}
-              height={props.item.h}
-              image={treeImg}
+              y={-10}
+              text={String(code)}
+              fontSize={10}
+              fill="rgba(15,23,42,0.40)"
               listening={false}
             />
           ) : null}
         </Group>
-      ) : (
-        <Ellipse
-          x={props.item.w / 2}
-          y={props.item.h / 2 + props.item.h * 0.08}
-          radiusX={props.item.w * 0.28}
-          radiusY={props.item.h * 0.22}
-          fill="rgba(15,23,42,0.04)"
-          listening={false}
-          perfectDrawEnabled={false}
-        />
-      )}
-
-      {/* Optional label (kept minimal; doesn’t do anything if you don’t set item.name) */}
-      {showLabel && props.item.label ? (
-        <Text
-          ref={textRef}
-          x={0}
-          y={-18}
-          text={props.item.label}
-          fontSize={12}
-          fill="rgba(15,23,42,0.65)"
-          listening={false}
-        />
       ) : null}
 
       {/* Corner handles */}
@@ -546,7 +318,10 @@ function ItemNodeImpl(props: Props) {
       ) : null}
 
       {/* Curvature editor */}
-      {isSelected && !props.locked && props.editMode === "curvature" && (props.item.meta.curvature || draftCurv) ? (
+      {isSelected &&
+      !props.locked &&
+      props.editMode === "curvature" &&
+      (props.item.meta.curvature || draftCurv) ? (
         <CurvatureEditorOverlay
           w={props.item.w}
           h={props.item.h}
@@ -557,7 +332,10 @@ function ItemNodeImpl(props: Props) {
       ) : null}
 
       {/* Polygon editor */}
-      {isSelected && !props.locked && props.editMode === "polygon" && (props.item.meta.polygon || draftPoly) ? (
+      {isSelected &&
+      !props.locked &&
+      props.editMode === "polygon" &&
+      (props.item.meta.polygon || draftPoly) ? (
         <PolygonEditorOverlay
           w={props.item.w}
           h={props.item.h}

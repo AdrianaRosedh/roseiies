@@ -36,9 +36,14 @@ export default function StudioApp({
   // If we land on /app/something-unknown, don’t break — just show Workplace
   const showWorkplace = !openApp || !isKnownApp(openApp) || appDef?.tile.status === "soon";
 
-  if (!showWorkplace && appDef) {
+    if (!showWorkplace && appDef) {
     return (
-      <StudioChrome portal={portal} sectionLabel={appDef.tile.name}>
+      <StudioChrome
+        portal={portal}
+        sectionLabel={appDef.tile.name}
+        hideHeader
+        fullBleed
+      >
         {appDef.render({
           portal,
           onBack: () => {

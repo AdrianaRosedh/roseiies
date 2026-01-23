@@ -33,11 +33,9 @@ async function ensureGardenId(args: {
 }) {
   const { supabase, tenantId, gardenName } = args;
 
-  // Try resolve first
   const resolved = await resolveGardenId({ supabase, tenantId, gardenName });
   if (resolved.gardenId) return resolved;
 
-  // If not found, create (Sheets-first workflow)
   const { data: created, error: createErr } = await supabase
     .from("gardens")
     .insert({
@@ -81,14 +79,15 @@ export async function GET(req: Request) {
     gardenName,
   });
 
-  // ✅ DO NOT 404 for "not created yet" — return empty
   if (!gardenId) {
     return Response.json([]);
   }
 
   const { data, error } = await supabase
     .from("garden_plantings")
-    .select("id, bed_id, crop, status, planted_at, pin_x, pin_y, created_at")
+    .select(
+      "id, bed_id, zone_code, crop, status, planted_at, pin_x, pin_y, created_at"
+    )
     .eq("tenant_id", tenantId)
     .eq("garden_id", gardenId)
     .order("created_at", { ascending: false });
@@ -120,7 +119,6 @@ export async function POST(req: Request) {
     return Response.json({ error: "Missing gardenName" }, { status: 400 });
   }
 
-  // ✅ Auto-create garden if missing
   const { gardenId, error: gerr } = await ensureGardenId({
     supabase,
     tenantId,
@@ -131,7 +129,7 @@ export async function POST(req: Request) {
     return Response.json({ error: gerr ?? "Garden not found" }, { status: 400 });
   }
 
-  const { bed_id, crop, planted_at, pin_x, pin_y, status } = body ?? {};
+  const { bed_id, zone_code, crop, planted_at, pin_x, pin_y, status } = body ?? {};
 
   const { data, error } = await supabase
     .from("garden_plantings")
@@ -139,6 +137,7 @@ export async function POST(req: Request) {
       tenant_id: tenantId,
       garden_id: gardenId,
       bed_id: bed_id ?? null,
+      zone_code: zone_code ?? null,
       crop: crop ?? null,
       status: status ?? null,
       planted_at: planted_at ?? null,
@@ -175,7 +174,16 @@ export async function PATCH(req: Request) {
 
   const body = await req.json();
 
-  const allowed = ["crop", "status", "planted_at", "bed_id", "pin_x", "pin_y"] as const;
+  const allowed = [
+    "crop",
+    "status",
+    "planted_at",
+    "bed_id",
+    "zone_code",
+    "pin_x",
+    "pin_y",
+  ] as const;
+
   const patch: Record<string, any> = {};
   for (const k of allowed) {
     if (k in body) patch[k] = body[k];
@@ -184,7 +192,7 @@ export async function PATCH(req: Request) {
   const { data, error } = await supabase
     .from("garden_plantings")
     .update(patch)
-    .eq("tenant_id", tenantId) // IMPORTANT safety
+    .eq("tenant_id", tenantId)
     .eq("id", id)
     .select()
     .single();

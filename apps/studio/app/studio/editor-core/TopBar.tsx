@@ -152,102 +152,105 @@ export default function TopBar(props: {
       </header>
 
       {/* ✅ Desktop header (your existing UI) */}
-      <header className="hidden md:flex h-14 items-center justify-between gap-3 border border-black/10 bg-white/60 backdrop-blur px-3 rounded-xl shadow-sm">
-        {/* LEFT: garden + layout */}
-        <div className="flex items-center gap-2 min-w-0">
-          {props.onBack ? (
-            <button
-              onClick={props.onBack}
-              className="rounded-lg border border-black/10 bg-white px-3 py-2 text-xs text-black/80 shadow-sm hover:bg-black/5"
-              title="Back to Workplace"
-              aria-label="Back to Workplace"
+      <header className="hidden md:block border-b border-black/10 bg-white/70 backdrop-blur">
+        <div className="h-14 flex items-center gap-3 px-3 overflow-x-auto">
+          {/* LEFT cluster */}
+          <div className="flex items-center gap-2 min-w-max">
+            {props.onBack ? (
+              <button
+                onClick={props.onBack}
+                className="rounded-lg border border-black/10 bg-white px-3 py-2 text-xs text-black/80 shadow-sm hover:bg-black/5"
+                title="Back to Workplace"
+                aria-label="Back to Workplace"
+              >
+                ←
+              </button>
+            ) : null}
+      
+            <select
+              value={state.activeGardenId ?? ""}
+              onChange={(e) => props.onSetGarden(e.target.value)}
+              className="rounded-lg border border-black/10 bg-white px-3 py-2 text-xs shadow-sm"
             >
-              ←
+              {state.gardens.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name}
+                </option>
+              ))}
+            </select>
+            
+            <button className={btn("ghost")} onClick={() => open("renameGarden")} disabled={!activeGarden}>
+              Rename
             </button>
-          ) : null}
-
-          <select
-            value={state.activeGardenId ?? ""}
-            onChange={(e) => props.onSetGarden(e.target.value)}
-            className="rounded-lg border border-black/10 bg-white px-3 py-2 text-xs shadow-sm"
-          >
-            {state.gardens.map((g) => (
-              <option key={g.id} value={g.id}>
-                {g.name}
-              </option>
-            ))}
-          </select>
-
-          <button className={btn("ghost")} onClick={() => open("renameGarden")} disabled={!activeGarden}>
-            Rename
-          </button>
-
-          <button className={btn("ghost")} onClick={() => open("newGarden")}>
-            + Garden
-          </button>
-
-          <span className="mx-2 h-5 w-px bg-black/10" />
-
-          <select
-            value={state.activeLayoutId ?? ""}
-            onChange={(e) => props.onSetLayout(e.target.value)}
-            className="rounded-lg border border-black/10 bg-white px-3 py-2 text-xs shadow-sm"
-          >
-            {layoutsForGarden.map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.published ? "● " : ""}
-                {l.name}
-              </option>
-            ))}
-          </select>
-
-          <button className={btn("ghost")} onClick={() => open("renameLayout")} disabled={!activeLayout}>
-            Rename
-          </button>
-
-          <button className={btn("ghost")} onClick={() => open("newLayout")} disabled={!state.activeGardenId}>
-            + Layout
-          </button>
-
-          <button
-            className={btn("primary")}
-            onClick={runPublish}
-            disabled={!activeLayout || publishing}
-            title="Publish this layout"
-          >
-            {publishing ? "Publishing…" : `Publish ${publishedDot}`.trim()}
-          </button>
-        </div>
-
-        {/* RIGHT: edit controls */}
-        <div className="flex items-center gap-2 shrink-0">
-          {status ? (
-            <span className="hidden md:inline-flex rounded-full border border-black/10 bg-white px-3 py-2 text-xs text-black/70 shadow-sm">
-              {status}
+            
+            <button className={btn("ghost")} onClick={() => open("newGarden")}>
+              + Garden
+            </button>
+            
+            <span className="mx-2 h-5 w-px bg-black/10" />
+            
+            <select
+              value={state.activeLayoutId ?? ""}
+              onChange={(e) => props.onSetLayout(e.target.value)}
+              className="rounded-lg border border-black/10 bg-white px-3 py-2 text-xs shadow-sm"
+            >
+              {layoutsForGarden.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.published ? "● " : ""}
+                  {l.name}
+                </option>
+              ))}
+            </select>
+            
+            <button className={btn("ghost")} onClick={() => open("renameLayout")} disabled={!activeLayout}>
+              Rename
+            </button>
+            
+            <button className={btn("ghost")} onClick={() => open("newLayout")} disabled={!state.activeGardenId}>
+              + Layout
+            </button>
+            
+            <button
+              className={btn("primary")}
+              onClick={runPublish}
+              disabled={!activeLayout || publishing}
+              title="Publish this layout"
+            >
+              {publishing ? "Publishing…" : `Publish ${publishedDot}`.trim()}
+            </button>
+          </div>
+            
+          {/* RIGHT cluster */}
+          <div className="flex items-center gap-2 min-w-max ml-auto">
+            {status ? (
+              <span className="hidden md:inline-flex rounded-full border border-black/10 bg-white px-3 py-2 text-xs text-black/70 shadow-sm">
+                {status}
+              </span>
+            ) : null}
+      
+            <span className="rounded-full border border-black/10 bg-white px-3 py-2 text-xs text-black/70 shadow-sm">
+              Zoom: {Math.round(stageScale * 100)}%
             </span>
-          ) : null}
-
-          <span className="rounded-full border border-black/10 bg-white px-3 py-2 text-xs text-black/70 shadow-sm">
-            Zoom: {Math.round(stageScale * 100)}%
-          </span>
-
-          <button className={btn("ghost")} onClick={props.onResetView}>
-            Reset
-          </button>
-
-          <button className={btn("ghost")} onClick={props.onCopy} disabled={!props.canCopy}>
-            Copy
-          </button>
-
-          <button className={btn("ghost")} onClick={props.onPaste} disabled={!props.canPaste}>
-            Paste
-          </button>
-
-          <button className={btn("danger")} onClick={props.onDelete} disabled={!props.canDelete}>
-            Delete
-          </button>
+          
+            <button className={btn("ghost")} onClick={props.onResetView}>
+              Reset
+            </button>
+          
+            <button className={btn("ghost")} onClick={props.onCopy} disabled={!props.canCopy}>
+              Copy
+            </button>
+          
+            <button className={btn("ghost")} onClick={props.onPaste} disabled={!props.canPaste}>
+              Paste
+            </button>
+          
+            <button className={btn("danger")} onClick={props.onDelete} disabled={!props.canDelete}>
+              Delete
+            </button>
+          </div>
         </div>
       </header>
+          
 
       <Modal
         open={mode !== null}

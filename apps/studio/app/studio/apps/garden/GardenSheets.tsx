@@ -620,21 +620,34 @@ export default function GardenSheets({
 
   return (
     <div className="w-full" ref={gridRef}>
-      <div className="flex items-center justify-between gap-3 mb-3">
+      <div className="sticky top-0 z-10 mb-3 flex items-center justify-between gap-3 bg-white/70 backdrop-blur py-2">
         <div className="min-w-0">
-          <div className="text-xs text-black/55">Garden</div>
-          <div className="text-lg font-semibold truncate">{activeGarden?.name ?? "—"}</div>
+          <div className="text-xs text-black/45">Garden Data</div>
+          <div className="text-sm font-semibold text-black/75 truncate">
+            {activeGarden?.name ?? "—"}
+          </div>
         </div>
-
-        <div className="flex items-center gap-2">
+        
+        <div className="flex items-center gap-2 shrink-0">
+          {/* Optional: keep a small “Map” link, but subtle */}
+          {onGoDesign ? (
+            <button
+              onClick={onGoDesign}
+              className="rounded-lg border border-black/10 bg-white/60 px-3 py-2 text-sm backdrop-blur hover:bg-white/80"
+              title="Open Map"
+            >
+              Map
+            </button>
+          ) : null}
+      
           <button
             onClick={addColumnInline}
             className="rounded-lg border border-black/10 bg-white/60 px-3 py-2 text-sm backdrop-blur hover:bg-white/80"
             title="Add a column"
           >
-            + Add column
+            + Column
           </button>
-
+        
           <button
             onClick={refresh}
             className="rounded-lg border border-black/10 bg-white/60 px-3 py-2 text-sm backdrop-blur hover:bg-white/80"
@@ -643,6 +656,8 @@ export default function GardenSheets({
           </button>
         </div>
       </div>
+        
+      
 
       <div className="rounded-xl border border-black/10 bg-white/55 backdrop-blur shadow-sm overflow-hidden">
         <div className="flex border-b border-black/10 bg-white/70">

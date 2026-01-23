@@ -40,6 +40,19 @@ export type PlantBlock = {
   pins?: PlantPin[];
 };
 
+// ✅ V1 Zones (inside a bed), normalized 0..1 to bed box.
+// Stored on bed.meta.zones so resizing a bed keeps zone geometry valid.
+export type BedZone = {
+  code: string; // "A", "B", "C"...
+  x: number; // 0..1
+  y: number; // 0..1
+  w: number; // 0..1
+  h: number; // 0..1
+  label?: string; // optional display label (later)
+  public?: boolean; // optional per-zone visibility (later)
+  note?: string; // optional
+};
+
 // ✅ Bezier path data (Illustrator-style)
 // Coordinates are normalized 0..1 relative to the item box.
 export type BezierHandle = { x: number; y: number }; // 0..1
@@ -97,8 +110,14 @@ export type StudioItem = {
   label: string;
 
   meta: {
+    // ✅ Stable human-facing code (auto-assigned). Example: "G1-B01", "G2-T03"
+    code?: string;
+
     status?: "abundant" | "fragile" | "dormant";
     public?: boolean;
+
+    // ✅ V1 zones live only on beds
+    zones?: BedZone[];
 
     // ✅ Advanced Bezier (Pen-tool style)
     bezier?: BezierPath;
@@ -111,7 +130,7 @@ export type StudioItem = {
 
     plants?: PlantBlock[];
 
-    parentBedId?: string; // only for item.type === "zone"
+    parentBedId?: string; // only for item.type === "zone" (legacy / optional)
 
     locked?: boolean;
 
