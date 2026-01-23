@@ -34,6 +34,10 @@ function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
+function samePos(a: { x: number; y: number }, b: { x: number; y: number }) {
+  return a.x === b.x && a.y === b.y;
+}
+
 function isPillLike(item: StudioItem) {
   return item.type === "path" || item.type === "label";
 }
@@ -87,6 +91,9 @@ export default function CanvasStage(props: {
   snapToGrid?: boolean;
   snapStep?: number;
   cursorWorld?: { x: number; y: number } | null;
+  treePlacing?: boolean;
+  setTreePlacing?: (v: boolean) => void;
+
 }) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<Konva.Stage>(null);
@@ -103,6 +110,8 @@ export default function CanvasStage(props: {
   const [editPlot, setEditPlot] = useState(false);
   const [draftCanvas, setDraftCanvas] = useState<{ w: number; h: number } | null>(null);
 
+  const [constrainView, setConstrainView] = useState(true);
+
   useEffect(() => {
     if (editPlot) setShowPlotBoundary(true);
   }, [editPlot]);
@@ -112,6 +121,62 @@ export default function CanvasStage(props: {
 
   const MIN_PLOT_W = 640;
   const MIN_PLOT_H = 420;
+
+  // keeps plot reachable in viewport
+  const clampStagePosToPlot = useCallback(
+    (pos: { x: number; y: number }) => {
+      const pad = 90;
+
+      const scaledW = plotW * props.stageScale;
+      const scaledH = plotH * props.stageScale;
+
+      const centerX = (stageSize.w - scaledW) / 2;
+      const centerY = (stageSize.h - scaledH) / 2;
+
+      let minX: number, maxX: number;
+      if (scaledW + pad * 2 <= stageSize.w) {
+        minX = maxX = centerX;
+      } else {
+        minX = stageSize.w - scaledW - pad;
+        maxX = pad;
+      }
+
+      let minY: number, maxY: number;
+      if (scaledH + pad * 2 <= stageSize.h) {
+        minY = maxY = centerY;
+      } else {
+        minY = stageSize.h - scaledH - pad;
+        maxY = pad;
+      }
+
+      return {
+        x: Math.max(minX, Math.min(maxX, pos.x)),
+        y: Math.max(minY, Math.min(maxY, pos.y)),
+      };
+    },
+    [plotW, plotH, props.stageScale, stageSize.w, stageSize.h]
+  );
+
+  // ✅ IMPORTANT: only set if it actually changes (prevents loops)
+  const setStagePosSmart = useCallback(
+    (p: { x: number; y: number }) => {
+      const next = constrainView ? clampStagePosToPlot(p) : p;
+      if (!samePos(next, props.stagePos)) props.setStagePos(next);
+    },
+    [constrainView, clampStagePosToPlot, props.setStagePos, props.stagePos]
+  );
+
+  // ✅ Clamp once when turning constrainView ON (no dependency on props.stagePos)
+  const prevConstrainRef = useRef(constrainView);
+  useEffect(() => {
+    const prev = prevConstrainRef.current;
+    prevConstrainRef.current = constrainView;
+
+    if (!prev && constrainView) {
+      const next = clampStagePosToPlot(props.stagePos);
+      if (!samePos(next, props.stagePos)) props.setStagePos(next);
+    }
+  }, [constrainView, clampStagePosToPlot, props.setStagePos, props.stagePos]);
 
   const itemsSorted = useMemo(
     () => [...props.doc.items].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)),
@@ -155,7 +220,6 @@ export default function CanvasStage(props: {
     [props.stagePos.x, props.stagePos.y, props.stageScale]
   );
 
-  // keep viewport center updated
   useEffect(() => {
     props.setViewportCenterWorld(worldFromScreen({ x: stageSize.w / 2, y: stageSize.h / 2 }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -165,7 +229,7 @@ export default function CanvasStage(props: {
     stageRef,
     panMode: props.panMode,
     stagePos: props.stagePos,
-    setStagePos: props.setStagePos,
+    setStagePos: setStagePosSmart,
     stageScale: props.stageScale,
     setSelectedIds: props.setSelectedIds,
     setToolbarBox: selectionUI.setToolbarBox,
@@ -176,12 +240,15 @@ export default function CanvasStage(props: {
     worldFromScreen,
     onAddItemAtWorld: props.onAddItemAtWorld,
     tool: props.tool,
+    hasSelection: props.selectedIds.length > 0,
+    placeMode: props.treePlacing ? { tool: "tree" as any, keepOpen: true } : null,
+    onExitPlaceMode: () => props.setTreePlacing?.(false),
   });
 
   const zoom = useZoom({
     stageRef,
     stagePos: props.stagePos,
-    setStagePos: props.setStagePos,
+    setStagePos: setStagePosSmart,
     stageScale: props.stageScale,
     setStageScale: props.setStageScale,
     updateSelectionUIRaf: selectionUI.updateSelectionUIRaf,
@@ -210,12 +277,15 @@ export default function CanvasStage(props: {
       const h = Math.max(MIN_PLOT_H, Math.round(next.h));
       props.onUpdateCanvas({ width: w, height: h });
       clampItemsToPlot(w, h);
+
+      // keep camera sane after plot changes (guarded)
+      setStagePosSmart(props.stagePos);
+
       setDraftCanvas(null);
     },
-    [clampItemsToPlot, props.onUpdateCanvas]
+    [clampItemsToPlot, props.onUpdateCanvas, props.stagePos, setStagePosSmart]
   );
 
-  // Toolbar actions (kept minimal here; shell has the main command set)
   const duplicateSelected = useCallback(() => {
     props.onCopySelected();
     props.onPasteAtCursor();
@@ -252,7 +322,8 @@ export default function CanvasStage(props: {
     if (hasBezier(single)) return setEditMode((m) => (m === "bezier" ? "none" : "bezier"));
     if (hasCurvature(single)) return setEditMode((m) => (m === "curvature" ? "none" : "curvature"));
     if (hasPolygon(single)) return setEditMode((m) => (m === "polygon" ? "none" : "polygon"));
-    if (isRectLike(single) && !isPillLike(single)) return setEditMode((m) => (m === "corners" ? "none" : "corners"));
+    if (isRectLike(single) && !isPillLike(single))
+      return setEditMode((m) => (m === "corners" ? "none" : "corners"));
     setEditMode("none");
   }, [single]);
 
@@ -316,7 +387,6 @@ export default function CanvasStage(props: {
   const canConvert = Boolean(single) && !anyLocked && !isSingleTree;
   const canEdit = Boolean(single) && !anyLocked && !isSingleTree;
 
-  // ✅ Snap preview guides (ghost lines) — based on cursorWorld + snapStep
   const snapStep = props.snapStep ?? 20;
   const showSnapGuides = Boolean(props.snapToGrid) && Boolean(props.cursorWorld);
   const snapped = useMemo(() => {
@@ -332,7 +402,6 @@ export default function CanvasStage(props: {
       style={{
         touchAction: "none",
         cursor: pan.panningRef.current.active ? "grabbing" : cursorRef.current,
-        background: "rgba(248,246,240,1)",
       }}
     >
       <PlotControls
@@ -344,7 +413,9 @@ export default function CanvasStage(props: {
         plotH={plotH}
         stageSize={stageSize}
         stageScale={props.stageScale}
-        setStagePos={props.setStagePos}
+        setStagePos={setStagePosSmart}
+        constrainView={constrainView}
+        setConstrainView={setConstrainView}
       />
 
       <PlotHud itemsCount={props.doc.items.length} selectedCount={props.selectedIds.length} />
@@ -413,26 +484,12 @@ export default function CanvasStage(props: {
               soilImg={textures.soilImg}
             />
 
-            {/* ✅ grid is shell-controlled */}
-            {props.showGrid !== false ? (
-              <Grid plotW={plotW} plotH={plotH} stageScale={props.stageScale} />
-            ) : null}
+            {props.showGrid !== false ? <Grid plotW={plotW} plotH={plotH} stageScale={props.stageScale} /> : null}
 
-            {/* ✅ snap preview guides */}
             {snapped ? (
               <>
-                <Line
-                  points={[snapped.x, 0, snapped.x, plotH]}
-                  stroke="rgba(111, 102, 255, 0.22)"
-                  strokeWidth={1}
-                  listening={false}
-                />
-                <Line
-                  points={[0, snapped.y, plotW, snapped.y]}
-                  stroke="rgba(111, 102, 255, 0.22)"
-                  strokeWidth={1}
-                  listening={false}
-                />
+                <Line points={[snapped.x, 0, snapped.x, plotH]} stroke="rgba(111, 102, 255, 0.22)" strokeWidth={1} listening={false} />
+                <Line points={[0, snapped.y, plotW, snapped.y]} stroke="rgba(111, 102, 255, 0.22)" strokeWidth={1} listening={false} />
               </>
             ) : null}
 

@@ -49,7 +49,9 @@ function memoEqual(a: Props, b: Props) {
     a.locked === b.locked &&
     a.stageScale === b.stageScale &&
     a.editMode === b.editMode &&
-    a.panMode === b.panMode
+    a.panMode === b.panMode &&
+    a.treeImages === b.treeImages &&
+    a.soilImg === b.soilImg
   );
 }
 
@@ -368,21 +370,6 @@ function ItemNodeImpl(props: Props) {
           listening={false}
         />
       )}
-
-      {showLabel && !isTree(props.item) ? (
-        <Text
-          ref={textRef}
-          x={14}
-          y={12}
-          text={props.item.label}
-          fontSize={14}
-          fill="rgba(15,23,42,0.90)"
-          listening={false}
-          opacity={isSelected ? 1 : 0.82}
-        />
-      ) : null}
-
-      {props.locked ? <Text x={props.item.w - 22} y={10} text="🔒" fontSize={12} listening={false} opacity={0.7} /> : null}
 
       {/* Corner handles */}
       {showCorners ? (

@@ -1,3 +1,4 @@
+// apps/studio/app/studio/editor-core/useWorkspaceStore.ts
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -22,11 +23,8 @@ function uid(prefix: string) {
 }
 
 // ✅ Tree SVG variants live in apps/studio/public/images/trees/
-const TREE_VARIANTS = ["tree-01", "tree-02", "tree-03", "tree-04", "citrus"] as const;
-
-function pickTreeVariant() {
-  return TREE_VARIANTS[Math.floor(Math.random() * TREE_VARIANTS.length)];
-}
+export const TREE_VARIANTS = ["tree-01", "tree-02", "tree-03", "tree-04", "citrus"] as const;
+export type TreeVariant = (typeof TREE_VARIANTS)[number];
 
 function seedStore(module: StudioModule): WorkspaceStore {
   const g1 = { id: "olivea_garden_main", name: "Huerto Principal" };
@@ -78,18 +76,10 @@ function emptyDoc(module: StudioModule): LayoutDoc {
 function isEditableTarget(el: EventTarget | null) {
   if (!el || !(el instanceof HTMLElement)) return false;
   const tag = el.tagName.toLowerCase();
-  return (
-    tag === "input" ||
-    tag === "textarea" ||
-    tag === "select" ||
-    el.isContentEditable
-  );
+  return tag === "input" || tag === "textarea" || tag === "select" || el.isContentEditable;
 }
 
-export function useWorkspaceStore(
-  module: StudioModule,
-  opts?: { tenantId?: string }
-) {
+export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: string }) {
   const key = storageKey(opts?.tenantId);
 
   const [mounted, setMounted] = useState(false);
@@ -106,7 +96,6 @@ export function useWorkspaceStore(
   }, [state, mounted, key]);
 
   const [tool, setTool] = useState<ItemType>("bed");
-
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const [stageScale, setStageScale] = useState(1);
@@ -118,6 +107,9 @@ export function useWorkspaceStore(
   const viewportCenterWorldRef = useRef<{ x: number; y: number } | null>(null);
 
   const [clipboard, setClipboard] = useState<StudioItem[] | null>(null);
+
+  // ✅ NEW: preferred tree variant for insert
+  const [treeVariant, setTreeVariant] = useState<TreeVariant>("tree-01");
 
   const doc = useMemo(() => {
     const id = state.activeLayoutId;
@@ -155,10 +147,11 @@ export function useWorkspaceStore(
     }));
   }
 
+  // ✅ alias expected by StudioShell
+  const updateLayoutDoc = updateDoc;
+
   function updateItem(id: string, patch: Partial<StudioItem>) {
-    updateDoc({
-      items: doc.items.map((it) => (it.id === id ? { ...it, ...patch } : it)),
-    });
+    updateDoc({ items: doc.items.map((it) => (it.id === id ? { ...it, ...patch } : it)) });
   }
 
   function updateMeta(id: string, patch: Partial<StudioItem["meta"]>) {
@@ -192,7 +185,6 @@ export function useWorkspaceStore(
     setSelectedIds([]);
   }
 
-  // ✅ No prompt: name is provided by UI (TopBar)
   function newGarden(name: string) {
     const g = { id: uid("garden"), name };
     const l = {
@@ -274,7 +266,6 @@ export function useWorkspaceStore(
     const json = await res.json();
     if (!res.ok) return { ok: false, error: json?.error ?? "unknown error" };
 
-    // Update local state so the ● indicator updates immediately
     setState((prev) => ({
       ...prev,
       layouts: prev.layouts.map((l) => {
@@ -310,14 +301,12 @@ export function useWorkspaceStore(
     const w =
       args.type === "path" ? 240 :
       args.type === "label" ? 220 :
-      args.type === "tree" ? 120 :
-      200;
+      args.type === "tree" ? 170 : 200;
 
     const h =
       args.type === "path" ? 28 :
       args.type === "label" ? 44 :
-      args.type === "tree" ? 120 :
-      120;
+      args.type === "tree" ? 170 : 200;
 
     const label =
       args.type === "bed"
@@ -352,7 +341,7 @@ export function useWorkspaceStore(
             ? {
                 species: "Tree",
                 canopyM: 3,
-                variant: pickTreeVariant(),
+                variant: treeVariant, // ✅ use chosen variant
               }
             : undefined,
       },
@@ -385,14 +374,8 @@ export function useWorkspaceStore(
     setClipboard(
       selectedItems.map((it) => ({
         ...it,
-        meta: {
-          ...it.meta,
-          plants: it.meta.plants ? [...it.meta.plants] : it.meta.plants,
-        },
-        style: {
-          ...it.style,
-          shadow: it.style.shadow ? { ...it.style.shadow } : undefined,
-        },
+        meta: { ...it.meta, plants: it.meta.plants ? [...it.meta.plants] : it.meta.plants },
+        style: { ...it.style, shadow: it.style.shadow ? { ...it.style.shadow } : undefined },
       }))
     );
   }
@@ -422,14 +405,8 @@ export function useWorkspaceStore(
       id: uid(it.type),
       x: it.x + dx,
       y: it.y + dy,
-      meta: {
-        ...it.meta,
-        plants: it.meta.plants ? [...it.meta.plants] : it.meta.plants,
-      },
-      style: {
-        ...it.style,
-        shadow: it.style.shadow ? { ...it.style.shadow } : undefined,
-      },
+      meta: { ...it.meta, plants: it.meta.plants ? [...it.meta.plants] : it.meta.plants },
+      style: { ...it.style, shadow: it.style.shadow ? { ...it.style.shadow } : undefined },
     }));
 
     updateDoc({ items: [...doc.items, ...pasted] });
@@ -448,9 +425,7 @@ export function useWorkspaceStore(
     const bed = doc.items.find((i) => i.id === bedId);
     if (!bed) return;
     const plants = bed.meta.plants ?? [];
-    updateMeta(bedId, {
-      plants: plants.map((p) => (p.id === plantId ? { ...p, ...patch } : p)),
-    });
+    updateMeta(bedId, { plants: plants.map((p) => (p.id === plantId ? { ...p, ...patch } : p)) });
   }
 
   function removePlant(bedId: string, plantId: string) {
@@ -460,7 +435,7 @@ export function useWorkspaceStore(
     updateMeta(bedId, { plants: plants.filter((p) => p.id !== plantId) });
   }
 
-  // Keyboard shortcuts
+  // Keyboard shortcuts (existing)
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (isEditableTarget(e.target)) return;
@@ -547,9 +522,14 @@ export function useWorkspaceStore(
     clipboard,
 
     updateDoc,
+    updateLayoutDoc,
     updateItem,
     updateMeta,
     updateStyle,
+
+    // ✅ tree picker state
+    treeVariant,
+    setTreeVariant,
 
     setCursorWorld,
     setViewportCenterWorld,

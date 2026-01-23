@@ -1,6 +1,8 @@
+// apps/studio/app/studio/editor-core/shell/mobile/MobileBottomBar.tsx
 "use client";
 
-import type { MobileSheetKind } from "../StudioShell";
+import type { ReactNode } from "react";
+import type { MobileSheetKind } from "./../StudioShell";
 
 export default function MobileBottomBar(props: {
   active: MobileSheetKind;
@@ -45,7 +47,7 @@ function MobileBarButton(props: {
   label: string;
   active?: boolean;
   onClick: () => void;
-  icon: React.ReactNode;
+  icon: ReactNode;
 }) {
   return (
     <button
@@ -76,6 +78,7 @@ function IconWrench() {
     </svg>
   );
 }
+
 function IconSliders() {
   return (
     <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -94,6 +97,7 @@ function IconSliders() {
     </svg>
   );
 }
+
 function IconDots() {
   return (
     <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">

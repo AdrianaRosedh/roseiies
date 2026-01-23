@@ -13,15 +13,37 @@ export default function StageBackground(props: {
 
   return (
     <>
+      {/* Infinite "desk paper" (slightly darker than the plot so the plot reads as a surface) */}
       <Rect
         x={-INF}
         y={-INF}
         width={INF * 2}
         height={INF * 2}
-        fill="rgba(248,246,240,1)"
+        fill="rgba(238,233,225,1)" // darker than plot surface
         listening={false}
       />
 
+      {/* Gentle vignette so it feels infinite / ambient */}
+      <Rect
+        x={-INF}
+        y={-INF}
+        width={INF * 2}
+        height={INF * 2}
+        fillRadialGradientStartPoint={{ x: 0, y: 0 }}
+        fillRadialGradientEndPoint={{ x: 0, y: 0 }}
+        fillRadialGradientStartRadius={INF * 0.15}
+        fillRadialGradientEndRadius={INF * 1.15}
+        fillRadialGradientColorStops={[
+          0,
+          "rgba(255,255,255,0.10)",
+          1,
+          "rgba(0,0,0,0.06)",
+        ]}
+        opacity={0.55}
+        listening={false}
+      />
+
+      {/* Subtle moving grain */}
       {props.noiseImg ? (
         <Rect
           x={-INF}
@@ -31,7 +53,7 @@ export default function StageBackground(props: {
           fillPatternImage={props.noiseImg}
           fillPatternRepeat="repeat"
           fillPatternOffset={props.noiseOffset}
-          opacity={0.035}
+          opacity={0.045}
           listening={false}
         />
       ) : null}

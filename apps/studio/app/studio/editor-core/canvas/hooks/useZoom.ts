@@ -1,25 +1,62 @@
 // apps/studio/app/studio/editor-core/canvas/hooks/useZoom.ts
 "use client";
 
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import type Konva from "konva";
 import { clamp } from "../utils/math";
 
 export function useZoom(args: {
   stageRef: React.RefObject<Konva.Stage | null>;
+
+  // React-state camera (commit only)
   stageScale: number;
   setStageScale: (s: number) => void;
   stagePos: { x: number; y: number };
   setStagePos: (p: { x: number; y: number }) => void;
+
   updateSelectionUIRaf: () => void;
 }) {
+  const liveScaleRef = useRef(args.stageScale);
+  const livePosRef = useRef(args.stagePos);
+
+  // keep stage in sync when NOT zooming (external state changes)
+  const zoomingRef = useRef(false);
+  useEffect(() => {
+    if (zoomingRef.current) return;
+
+    liveScaleRef.current = args.stageScale;
+    livePosRef.current = args.stagePos;
+
+    const stage = args.stageRef.current;
+    if (!stage) return;
+
+    stage.scale({ x: args.stageScale, y: args.stageScale });
+    stage.position(args.stagePos);
+    stage.batchDraw();
+  }, [args.stageScale, args.stagePos.x, args.stagePos.y, args.stageRef]);
+
+  // commit after wheel settles
+  const wheelCommitTimer = useRef<number | null>(null);
+  function scheduleCommit() {
+    if (wheelCommitTimer.current) window.clearTimeout(wheelCommitTimer.current);
+    wheelCommitTimer.current = window.setTimeout(() => {
+      wheelCommitTimer.current = null;
+      zoomingRef.current = false;
+
+      args.setStageScale(liveScaleRef.current);
+      args.setStagePos(livePosRef.current);
+    }, 90);
+  }
+
   const onWheel = useCallback(
     (e: any) => {
       e.evt.preventDefault();
       const stage = args.stageRef.current;
       if (!stage) return;
 
-      const oldScale = args.stageScale;
+      zoomingRef.current = true;
+
+      const oldScale = stage.scaleX(); // use stage as source of truth during interaction
       const pointer = stage.getPointerPosition();
       if (!pointer) return;
 
@@ -29,18 +66,29 @@ export function useZoom(args: {
       let newScale = direction > 0 ? oldScale * scaleBy : oldScale / scaleBy;
       newScale = clamp(newScale, 0.35, 2.6);
 
+      const pos = stage.position();
+
+      // keep pointer fixed in world space
       const mousePointTo = {
-        x: (pointer.x - args.stagePos.x) / oldScale,
-        y: (pointer.y - args.stagePos.y) / oldScale,
+        x: (pointer.x - pos.x) / oldScale,
+        y: (pointer.y - pos.y) / oldScale,
       };
 
-      args.setStageScale(newScale);
-      args.setStagePos({
+      const nextPos = {
         x: pointer.x - mousePointTo.x * newScale,
         y: pointer.y - mousePointTo.y * newScale,
-      });
+      };
+
+      // ✅ imperative update
+      stage.scale({ x: newScale, y: newScale });
+      stage.position(nextPos);
+      stage.batchDraw();
+
+      liveScaleRef.current = newScale;
+      livePosRef.current = nextPos;
 
       args.updateSelectionUIRaf();
+      scheduleCommit();
     },
     [args]
   );
@@ -66,6 +114,7 @@ export function useZoom(args: {
       if (!pts || pts.length !== 2) return;
 
       e.evt.preventDefault();
+      zoomingRef.current = true;
 
       const p1 = pts[0];
       const p2 = pts[1];
@@ -80,20 +129,27 @@ export function useZoom(args: {
         return;
       }
 
-      const oldScale = args.stageScale;
+      const oldScale = stage.scaleX();
       const scaleBy = d / pr.lastDist;
       const newScale = clamp(oldScale * scaleBy, 0.35, 2.6);
 
+      const pos = stage.position();
       const pointTo = {
-        x: (c.x - args.stagePos.x) / oldScale,
-        y: (c.y - args.stagePos.y) / oldScale,
+        x: (c.x - pos.x) / oldScale,
+        y: (c.y - pos.y) / oldScale,
       };
 
-      args.setStageScale(newScale);
-      args.setStagePos({
+      const nextPos = {
         x: c.x - pointTo.x * newScale,
         y: c.y - pointTo.y * newScale,
-      });
+      };
+
+      stage.scale({ x: newScale, y: newScale });
+      stage.position(nextPos);
+      stage.batchDraw();
+
+      liveScaleRef.current = newScale;
+      livePosRef.current = nextPos;
 
       pr.lastCenter = c;
       pr.lastDist = d;
@@ -106,7 +162,13 @@ export function useZoom(args: {
   const onTouchEnd = useCallback(() => {
     pinchRef.current.lastCenter = null;
     pinchRef.current.lastDist = 0;
-  }, []);
+
+    zoomingRef.current = false;
+
+    // ✅ commit once at end
+    args.setStageScale(liveScaleRef.current);
+    args.setStagePos(livePosRef.current);
+  }, [args]);
 
   return { onWheel, onTouchMove, onTouchEnd };
 }

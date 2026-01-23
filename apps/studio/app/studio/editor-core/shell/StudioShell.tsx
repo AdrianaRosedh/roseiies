@@ -11,10 +11,18 @@ import Inspector from "../Inspector";
 import CanvasStage from "../canvas";
 
 import MobileShell from "./MobileShell";
-import type { MobileSheetKind } from "./types";
 
 import PanelHeader from "./desktop/PanelHeader";
 import CollapsedRail from "./desktop/CollapsedRail";
+
+// ✅ Keep this canonical here (shell version) so anything under /shell can import it.
+// If you ALSO export it from ../StudioShell.tsx, that's fine—just keep them identical.
+export type MobileSheetKind =
+  | "context"
+  | "tools"
+  | "inspector"
+  | "more"
+  | null;
 
 export default function StudioShell(props: {
   module: StudioModule;
@@ -44,6 +52,16 @@ export default function StudioShell(props: {
     };
   }, []);
 
+  // ✅ Tree placement mode (single click to place on canvas)
+  const [treePlacing, setTreePlacing] = useState(false);
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && treePlacing) setTreePlacing(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [treePlacing]);
+
   // Desktop rails
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
@@ -56,7 +74,7 @@ export default function StudioShell(props: {
   // Mobile sheets
   const [mobileSheet, setMobileSheet] = useState<MobileSheetKind>(null);
   const toggleSheet = (k: Exclude<MobileSheetKind, null>) =>
-    setMobileSheet((v) => (v === k ? null : k));
+    setMobileSheet((v: MobileSheetKind) => (v === k ? null : k));
 
   // Context (garden/layout)
   const activeGarden = useMemo(
@@ -157,10 +175,7 @@ export default function StudioShell(props: {
   }
 
   // ✅ Keyboard shortcuts for layers:
-  // ⌘] bring forward
-  // ⌘[ send backward
-  // ⌘⇧] to front
-  // ⌘⇧[ to back
+  // ⌘] bring forward, ⌘[ send backward, ⌘⇧] to front, ⌘⇧[ to back
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
@@ -184,9 +199,13 @@ export default function StudioShell(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedItems, doc.items]);
 
-  // Snap wrapper for canvas commits
+  // ✅ Snap wrapper for canvas commits
+  // ✅ IMPORTANT: do NOT snap trees (prevents “bounce back”)
   function updateItemSnapped(id: string, patch: any) {
-    if (!snapToGrid) return store.updateItem?.(id, patch);
+    const it = (doc.items ?? []).find((x: any) => x.id === id);
+    const isTree = it?.type === "tree";
+
+    if (!snapToGrid || isTree) return store.updateItem?.(id, patch);
 
     const round = (v: number) => Math.round(v / SNAP_STEP) * SNAP_STEP;
     const next = { ...patch };
@@ -199,7 +218,7 @@ export default function StudioShell(props: {
     return store.updateItem?.(id, next);
   }
 
-  // Shared canvasProps (desktop + mobile)
+  // ✅ Shared canvasProps (desktop + mobile)
   const canvasProps = {
     module,
     doc,
@@ -221,6 +240,10 @@ export default function StudioShell(props: {
     onPasteAtCursor: store.pasteAtCursor,
     onDeleteSelected: store.deleteSelected,
     showGrid,
+
+    // ✅ placement mode goes into CanvasStage
+    treePlacing,
+    setTreePlacing,
   };
 
   const LEFT_OPEN_W = 280;
@@ -230,7 +253,6 @@ export default function StudioShell(props: {
   const rightW = rightOpen ? RIGHT_OPEN_W : RAIL_W;
 
   return (
-    // ✅ Viewport-locked canvas app shell
     <div className="w-full h-dvh overflow-hidden flex flex-col">
       <TopBar
         module={module}
@@ -259,7 +281,6 @@ export default function StudioShell(props: {
         onOpenMobileContext={() => toggleSheet("context")}
       />
 
-      {/* Everything below TopBar must not scroll the page */}
       <div className="flex-1 overflow-hidden">
         {/* Desktop */}
         <div className="hidden md:flex gap-3 mt-3 h-full overflow-hidden px-3 pb-3">
@@ -281,9 +302,17 @@ export default function StudioShell(props: {
                       module={module}
                       tool={store.tool}
                       setTool={(t: any) => {
+                        // ✅ if user leaves tree tool, exit placement mode
+                        if (t !== "tree") setTreePlacing(false);
                         store.setTool(t);
-                        store.quickInsert(t);
                       }}
+                      // ✅ optional: toolbar can decide when to insert
+                      quickInsert={(t: any) => store.quickInsert?.(t)}
+                      // ✅ pass tree variant workflow through if you have it
+                      treeVariant={store.treeVariant}
+                      setTreeVariant={store.setTreeVariant}
+                      treePlacing={treePlacing}
+                      setTreePlacing={setTreePlacing}
                       // Quick actions
                       canDuplicate={canDuplicate}
                       canLock={canLock}

@@ -1,13 +1,14 @@
 // apps/studio/app/studio/editor-core/canvas/hooks/usePan.ts
 "use client";
 
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import type Konva from "konva";
 import { useRafThrottled } from "./useRafThrottled";
 
 export function usePan(args: {
   stageRef: React.RefObject<Konva.Stage | null>;
   panMode: boolean;
+
   stagePos: { x: number; y: number };
   setStagePos: (p: { x: number; y: number }) => void;
 
@@ -26,6 +27,12 @@ export function usePan(args: {
   worldFromScreen: (p: { x: number; y: number }) => { x: number; y: number };
   onAddItemAtWorld: (args: { type: any; x: number; y: number }) => void;
   tool: any;
+
+  hasSelection?: boolean;
+
+  // ✅ NEW: placement mode
+  placeMode?: { tool: any; keepOpen?: boolean } | null;
+  onExitPlaceMode?: () => void;
 }) {
   const panningRef = useRef({
     active: false,
@@ -38,27 +45,50 @@ export function usePan(args: {
   const emptyDownRef = useRef<{ x: number; y: number } | null>(null);
   const didPanRef = useRef(false);
 
-  const isEmptyHit = useCallback((e: any) => {
+  const livePosRef = useRef<{ x: number; y: number }>(args.stagePos);
+
+  useEffect(() => {
+    if (panningRef.current.active) return;
+    livePosRef.current = args.stagePos;
+
     const stage = args.stageRef.current;
-    if (!stage) return false;
-    return e.target === stage;
-  }, [args.stageRef]);
+    if (!stage) return;
+
+    stage.position(args.stagePos);
+    stage.batchDraw();
+  }, [args.stagePos.x, args.stagePos.y, args.stageRef]);
+
+  const setCursorWorldRaf = useRafThrottled(args.setCursorWorld);
+
+  const isEmptyHit = useCallback(
+    (e: any) => {
+      const stage = args.stageRef.current;
+      if (!stage) return false;
+      return e.target === stage;
+    },
+    [args.stageRef]
+  );
 
   const startPan = useCallback(
     (pointer: { x: number; y: number }) => {
+      const stage = args.stageRef.current;
+      if (!stage) return;
+
+      const pos = stage.position();
+
       panningRef.current = {
         active: true,
         startX: pointer.x,
         startY: pointer.y,
-        startPosX: args.stagePos.x,
-        startPosY: args.stagePos.y,
+        startPosX: pos.x,
+        startPosY: pos.y,
       };
+
+      livePosRef.current = { x: pos.x, y: pos.y };
       args.setWrapCursor("grabbing");
     },
-    [args.stagePos.x, args.stagePos.y, args.setWrapCursor]
+    [args.stageRef, args.setWrapCursor]
   );
-
-  const setCursorWorldRaf = useRafThrottled(args.setCursorWorld);
 
   const onStagePointerDown = useCallback(
     (e: any) => {
@@ -68,13 +98,32 @@ export function usePan(args: {
       const pointer = stage.getPointerPosition();
       if (!pointer) return;
 
-      if (args.panMode || isEmptyHit(e)) {
+      const empty = isEmptyHit(e);
+
+      // ✅ Placement mode: single click on empty canvas places an item
+      if (args.placeMode && empty && !args.panMode) {
+        e.cancelBubble = true;
+
+        const world = args.worldFromScreen(pointer);
+        args.onAddItemAtWorld({
+          type: args.placeMode.tool,
+          x: world.x - 90,
+          y: world.y - 60,
+        });
+
+        // keep placing unless caller wants to exit
+        if (!args.placeMode.keepOpen) args.onExitPlaceMode?.();
+        return;
+      }
+
+      // Normal pan
+      if (args.panMode || empty) {
         emptyDownRef.current = { x: pointer.x, y: pointer.y };
         didPanRef.current = false;
         startPan(pointer);
       }
     },
-    [args.panMode, isEmptyHit, startPan]
+    [args, isEmptyHit, startPan]
   );
 
   const onStagePointerMove = useCallback(() => {
@@ -93,20 +142,26 @@ export function usePan(args: {
 
     if (!didPanRef.current) {
       const d = Math.hypot(dx, dy);
-      if (d > 3) didPanRef.current = true;
+      if (d > 2) didPanRef.current = true;
     }
 
-    args.setStagePos({
+    const next = {
       x: panningRef.current.startPosX + dx,
       y: panningRef.current.startPosY + dy,
-    });
+    };
 
-    args.updateSelectionUIRaf();
+    livePosRef.current = next;
+
+    stage.position(next);
+    stage.batchDraw();
+
+    if (args.hasSelection) args.updateSelectionUIRaf();
   }, [args, setCursorWorldRaf]);
 
   const endPan = useCallback(() => {
     panningRef.current.active = false;
     args.setWrapCursor(args.cursorRef.current || "default");
+    args.setStagePos(livePosRef.current);
   }, [args]);
 
   const onStagePointerUp = useCallback(() => {

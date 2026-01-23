@@ -1,36 +1,12 @@
+// apps/studio/app/studio/editor-core/canvas/item/overlays/CornerSmartHandlesPro.tsx
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
-import { Group, Circle } from "react-konva";
+import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { Group, Circle, Text } from "react-konva";
 import type Konva from "konva";
 
 /* ---------------- Utils ---------------- */
 
-function clamp(n: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, n));
-}
-
-function cursorSvgDataUri(svg: string) {
-  const encoded = encodeURIComponent(svg).replace(/'/g, "%27").replace(/"/g, "%22");
-  return `url("data:image/svg+xml,${encoded}")`;
-}
-
-// 32x32 cursor, hotspot at center (16,16)
-const ROTATE_CURSOR =
-  cursorSvgDataUri(`
-  <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32">
-    <g fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M16 6a10 10 0 1 1-7.1 2.9"/>
-      <path d="M8.9 8.9L8 4.5l4.4.9"/>
-    </g>
-    <g fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.95">
-      <path d="M16 6a10 10 0 1 1-7.1 2.9"/>
-      <path d="M8.9 8.9L8 4.5l4.4.9"/>
-    </g>
-  </svg>
-`) + " 16 16, auto";
-
-/** Keep delta in [-180, 180] to prevent wrap jumps */
 function normalizeAngleDelta(delta: number) {
   let d = delta;
   while (d > 180) d -= 360;
@@ -45,7 +21,7 @@ function rotateVec(v: { x: number; y: number }, deg: number) {
   return { x: v.x * c - v.y * s, y: v.x * s + v.y * c };
 }
 
-/* ---------------- Corner Handles (stable, commit-only) ---------------- */
+/* ---------------- Component ---------------- */
 
 export default function CornerSmartHandlesPro(props: {
   w: number;
@@ -56,20 +32,30 @@ export default function CornerSmartHandlesPro(props: {
   onSelectionUI: () => void;
   onCommit: (patch: { x?: number; y?: number; w?: number; h?: number; r?: number }) => void;
   isCoarse: boolean;
-
-  // ✅ keep aspect ratio (perfect for trees)
   lockAspect?: boolean;
 }) {
-  const knobR = props.isCoarse ? 9 : 6;
-  const rotateRing = props.isCoarse ? 28 : 18;
-  const hitStroke = props.isCoarse ? rotateRing * 2.4 : rotateRing * 2;
+  // ✅ smaller knobs
+  const BASE_KNOB_R = props.isCoarse ? 7 : 5;
 
-  const corners = [
-    { key: "tl", x: 0, y: 0 },
-    { key: "tr", x: props.w, y: 0 },
-    { key: "br", x: props.w, y: props.h },
-    { key: "bl", x: 0, y: props.h },
-  ] as const;
+  // ✅ make rotation easy: larger ring + generous hit
+  const BASE_ROTATE_RING = props.isCoarse ? 44 : 34;
+
+  // generous stable hit target
+  const HIT = props.isCoarse ? 34 : 26;
+
+  // width of the rotation donut (between knob and ring)
+  const ROTATE_GAP = props.isCoarse ? 10 : 8;
+
+  const corners = useMemo(
+    () =>
+      [
+        { key: "tl", x: 0, y: 0 },
+        { key: "tr", x: props.w, y: 0 },
+        { key: "br", x: props.w, y: props.h },
+        { key: "bl", x: 0, y: props.h },
+      ] as const,
+    [props.w, props.h]
+  );
 
   type CornerKey = (typeof corners)[number]["key"];
   type DragMode = "none" | "rotate" | "resize";
@@ -92,177 +78,147 @@ export default function CornerSmartHandlesPro(props: {
     };
   }, []);
 
-  const dragRef = useRef<{
-    mode: DragMode;
-    corner: CornerKey;
+  const knobRefs = useRef<Record<string, Konva.Circle | null>>({});
+  const ringRefs = useRef<Record<string, Konva.Circle | null>>({});
 
-    startW: number;
-    startH: number;
-    startRotation: number;
-
-    startCenterWorld: { x: number; y: number };
-    startCenterParent: { x: number; y: number };
-    startAngleParent: number;
-
-    startScaleX: number;
-    startScaleY: number;
-    startAbsPos: { x: number; y: number };
-  } | null>(null);
-
-  const cleanupRef = useRef<(() => void) | null>(null);
-
-  function stagePointerWorld(): { x: number; y: number } | null {
+  const stagePointerWorld = useCallback((): { x: number; y: number } | null => {
     const g = props.groupRef.current;
     const stage = g?.getStage();
     return stage?.getPointerPosition() ?? null;
-  }
+  }, [props.groupRef]);
 
-  function parentInvTransform(): Konva.Transform | null {
+  const parentInvTransform = useCallback((): Konva.Transform | null => {
     const g = props.groupRef.current;
     if (!g) return null;
     const parent = g.getParent();
     if (!parent) return null;
     return parent.getAbsoluteTransform().copy().invert();
-  }
+  }, [props.groupRef]);
 
-  function pointerParent(): { x: number; y: number } | null {
-    const g = props.groupRef.current;
-    if (!g) return null;
+  const pointerParent = useCallback((): { x: number; y: number } | null => {
     const pW = stagePointerWorld();
     if (!pW) return null;
     const inv = parentInvTransform();
     return inv ? inv.point(pW) : pW;
-  }
+  }, [stagePointerWorld, parentInvTransform]);
 
-  function centerWorld(): { x: number; y: number } | null {
-    const g = props.groupRef.current;
-    if (!g) return null;
-    const t = g.getAbsoluteTransform();
-    return t.point({ x: props.w / 2, y: props.h / 2 });
-  }
-
-  function centerParent(): { x: number; y: number } | null {
-    const cW = centerWorld();
-    if (!cW) return null;
-    const inv = parentInvTransform();
-    return inv ? inv.point(cW) : cW;
-  }
-
-  function angleDeg(a: { x: number; y: number }, c: { x: number; y: number }) {
-    return (Math.atan2(a.y - c.y, a.x - c.x) * 180) / Math.PI;
-  }
-
-  function pointerToLocal(): { x: number; y: number } | null {
+  const pointerToLocal = useCallback((): { x: number; y: number } | null => {
     const g = props.groupRef.current;
     const pW = stagePointerWorld();
     if (!g || !pW) return null;
     const inv = g.getAbsoluteTransform().copy().invert();
     return inv.point(pW);
-  }
-
-  function isOutsideRect(local: { x: number; y: number }, pad = 2) {
-    return local.x < -pad || local.y < -pad || local.x > props.w + pad || local.y > props.h + pad;
-  }
+  }, [props.groupRef, stagePointerWorld]);
 
   function cornerDist(local: { x: number; y: number }, corner: { x: number; y: number }) {
     return Math.hypot(local.x - corner.x, local.y - corner.y);
   }
 
   function cursorForCornerResize(c: CornerKey) {
-    if (c === "tl" || c === "br") return "nwse-resize";
-    return "nesw-resize";
+    return c === "tl" || c === "br" ? "nwse-resize" : "nesw-resize";
   }
 
-  // Rock-solid center lock in WORLD space (no drift, no jump)
-  function forceCenterLock(g: Konva.Group, desiredCenterWorld: { x: number; y: number }) {
-    const t = g.getAbsoluteTransform();
-    const curCenterWorld = t.point({ x: props.w / 2, y: props.h / 2 });
-
-    const dx = desiredCenterWorld.x - curCenterWorld.x;
-    const dy = desiredCenterWorld.y - curCenterWorld.y;
-
-    const abs = g.absolutePosition();
-    g.absolutePosition({ x: abs.x + dx, y: abs.y + dy });
+  function expectedSignsForCorner(c: CornerKey) {
+    if (c === "br") return { sx: +1, sy: +1 }; // fixed tl
+    if (c === "tr") return { sx: +1, sy: -1 }; // fixed bl
+    if (c === "bl") return { sx: -1, sy: +1 }; // fixed tr
+    return { sx: -1, sy: -1 }; // tl fixed br
   }
 
-  // Keep label readable (no squish) — find first Text in group
-  const labelRef = useRef<Konva.Text | null>(null);
-  function getLabel(g: Konva.Group) {
-    if (labelRef.current) return labelRef.current;
-    labelRef.current = g.findOne("Text") as Konva.Text | null;
-    return labelRef.current;
-  }
-  function counterScaleLabel(g: Konva.Group) {
-    const t = getLabel(g);
-    if (!t) return;
+  // ✅ keep circles round + constant size during preview scaling
+  const syncHandleScale = useCallback(() => {
+    const g = props.groupRef.current;
+    if (!g) return;
 
-    const sx = g.scaleX();
-    const sy = g.scaleY();
-    if (Math.abs(sx) > 1e-6) t.scaleX(1 / sx);
-    if (Math.abs(sy) > 1e-6) t.scaleY(1 / sy);
-    t.rotation(-g.rotation());
-    t.getLayer()?.batchDraw();
-  }
+    const sx = g.scaleX() || 1;
+    const sy = g.scaleY() || 1;
+
+    const invX = 1 / sx;
+    const invY = 1 / sy;
+
+    for (const c of corners) {
+      const knob = knobRefs.current[c.key];
+      const ring = ringRefs.current[c.key];
+
+      if (knob) {
+        knob.scaleX(invX);
+        knob.scaleY(invY);
+        knob.radius(BASE_KNOB_R);
+        knob.strokeWidth(1.2);
+        knob.hitStrokeWidth(HIT);
+      }
+      if (ring) {
+        ring.scaleX(invX);
+        ring.scaleY(invY);
+        ring.radius(BASE_ROTATE_RING);
+        ring.hitStrokeWidth(HIT);
+      }
+    }
+  }, [props.groupRef, corners, BASE_KNOB_R, BASE_ROTATE_RING, HIT]);
+
+  const dragRef = useRef<{
+    mode: DragMode;
+    corner: CornerKey;
+    startW: number;
+    startH: number;
+    startRotation: number;
+    fixedCornerP: { x: number; y: number };
+    previewCenterP: { x: number; y: number };
+    exp: { sx: number; sy: number };
+    startPointerP: { x: number; y: number };
+  } | null>(null);
+
+  const cleanupRef = useRef<(() => void) | null>(null);
 
   function endDrag(commit: boolean) {
     const g = props.groupRef.current;
     const st = dragRef.current;
 
-    // clear drag state first (prevents re-entrancy weirdness)
     dragRef.current = null;
     setHoverRotateCorner(null);
     props.setWrapCursor("default");
 
-    // remove listeners
     if (cleanupRef.current) cleanupRef.current();
     cleanupRef.current = null;
 
     if (!g || !st) return;
 
-    // always re-enable dragging
     g.draggable(true);
 
     if (!commit) {
-      // cancel: restore *exact* start state
       g.rotation(st.startRotation);
-      g.scaleX(st.startScaleX);
-      g.scaleY(st.startScaleY);
-      g.absolutePosition(st.startAbsPos);
+      g.scaleX(1);
+      g.scaleY(1);
+      g.position(st.previewCenterP);
 
-      // hard re-lock to original center
-      forceCenterLock(g, st.startCenterWorld);
-
+      syncHandleScale();
       g.getLayer()?.batchDraw();
       props.onSelectionUI();
       return;
     }
 
-    // commit: bake scale into w/h, keep rotation, compute new top-left from locked center
-    const sx = g.scaleX();
-    const sy = g.scaleY();
+    const sx = Math.abs(g.scaleX());
+    const sy = Math.abs(g.scaleY());
 
     const nextW = Math.max(props.minSize, st.startW * sx);
     const nextH = Math.max(props.minSize, st.startH * sy);
 
-    // Convert locked world-center -> parent coords (item x/y are parent coords)
-    const inv = parentInvTransform();
-    const lockedCenterP = inv ? inv.point(st.startCenterWorld) : st.startCenterWorld;
+    const centerP = g.position();
 
-    const nextX = lockedCenterP.x - nextW / 2;
-    const nextY = lockedCenterP.y - nextH / 2;
-    const finalRot = g.rotation();
-
-    // reset node live scale so React props apply cleanly
     g.scaleX(1);
     g.scaleY(1);
 
-    // keep stable until re-render
-    forceCenterLock(g, st.startCenterWorld);
-
+    syncHandleScale();
     g.getLayer()?.batchDraw();
     props.onSelectionUI();
 
-    props.onCommit({ x: nextX, y: nextY, w: nextW, h: nextH, r: finalRot });
+    props.onCommit({
+      x: centerP.x - nextW / 2,
+      y: centerP.y - nextH / 2,
+      w: nextW,
+      h: nextH,
+      r: g.rotation(),
+    });
   }
 
   function beginDrag(mode: DragMode, corner: CornerKey) {
@@ -270,10 +226,17 @@ export default function CornerSmartHandlesPro(props: {
     const stage = g?.getStage();
     if (!g || !stage) return;
 
-    const cW = centerWorld();
-    const cP = centerParent();
     const pP = pointerParent();
-    if (!cW || !cP || !pP) return;
+    if (!pP) return;
+
+    const centerP = g.position();
+    const exp = expectedSignsForCorner(corner);
+
+    const fixedLocal = { x: -(props.w / 2) * exp.sx, y: -(props.h / 2) * exp.sy };
+    const fixedCornerP = {
+      x: centerP.x + rotateVec(fixedLocal, g.rotation()).x,
+      y: centerP.y + rotateVec(fixedLocal, g.rotation()).y,
+    };
 
     dragRef.current = {
       mode,
@@ -281,21 +244,21 @@ export default function CornerSmartHandlesPro(props: {
       startW: props.w,
       startH: props.h,
       startRotation: g.rotation(),
-      startCenterWorld: cW,
-      startCenterParent: cP,
-      startAngleParent: angleDeg(pP, cP),
-      startScaleX: g.scaleX(),
-      startScaleY: g.scaleY(),
-      startAbsPos: g.absolutePosition(),
+      fixedCornerP,
+      previewCenterP: centerP,
+      exp,
+      startPointerP: pP,
     };
 
-    // prevent the group itself from dragging while manipulating handles
     g.draggable(false);
 
-    if (mode === "rotate") props.setWrapCursor(ROTATE_CURSOR);
+    // ✅ no custom cursor for rotate; ring + badge is the affordance
+    if (mode === "rotate") props.setWrapCursor("default");
     if (mode === "resize") props.setWrapCursor(cursorForCornerResize(corner));
 
-    const NS = ".cornerHandlesPro";
+    syncHandleScale();
+
+    const NS = ".cornerHandlesRotateClean";
 
     const onMove = () => {
       const st = dragRef.current;
@@ -305,14 +268,17 @@ export default function CornerSmartHandlesPro(props: {
         const pNowP = pointerParent();
         if (!pNowP) return;
 
-        const now = angleDeg(pNowP, st.startCenterParent);
-        const delta = normalizeAngleDelta(now - st.startAngleParent);
+        const cP = st.previewCenterP;
+        const now = (Math.atan2(pNowP.y - cP.y, pNowP.x - cP.x) * 180) / Math.PI;
+        const start =
+          (Math.atan2(st.startPointerP.y - cP.y, st.startPointerP.x - cP.x) * 180) / Math.PI;
+        const delta = normalizeAngleDelta(now - start);
 
         let nextRot = st.startRotation + delta;
         if (shiftDownRef.current) nextRot = Math.round(nextRot / 15) * 15;
 
         g.rotation(nextRot);
-        forceCenterLock(g, st.startCenterWorld);
+        syncHandleScale();
 
         g.getLayer()?.batchDraw();
         props.onSelectionUI();
@@ -320,30 +286,35 @@ export default function CornerSmartHandlesPro(props: {
       }
 
       if (st.mode === "resize") {
-        const pW = stagePointerWorld();
-        if (!pW) return;
+        const pNowP = pointerParent();
+        if (!pNowP) return;
 
-        // resize from center in local rotation space
-        const vWorld = { x: pW.x - st.startCenterWorld.x, y: pW.y - st.startCenterWorld.y };
-        const vLocal = rotateVec(vWorld, -st.startRotation);
+        const vP = { x: pNowP.x - st.fixedCornerP.x, y: pNowP.y - st.fixedCornerP.y };
+        const vLocal = rotateVec(vP, -st.startRotation);
 
-        let halfW = Math.max(props.minSize / 2, Math.abs(vLocal.x));
-        let halfH = Math.max(props.minSize / 2, Math.abs(vLocal.y));
+        let nextW = Math.max(props.minSize, Math.abs(vLocal.x));
+        let nextH = Math.max(props.minSize, Math.abs(vLocal.y));
 
         if (props.lockAspect) {
-          const half = Math.max(halfW, halfH);
-          halfW = half;
-          halfH = half;
+          const m = Math.max(nextW, nextH);
+          nextW = m;
+          nextH = m;
         }
-
-        const nextW = halfW * 2;
-        const nextH = halfH * 2;
 
         g.scaleX(nextW / st.startW);
         g.scaleY(nextH / st.startH);
 
-        counterScaleLabel(g);
-        forceCenterLock(g, st.startCenterWorld);
+        syncHandleScale();
+
+        const centerOffsetLocal = { x: st.exp.sx * (nextW / 2), y: st.exp.sy * (nextH / 2) };
+        const centerOffsetP = rotateVec(centerOffsetLocal, st.startRotation);
+        const nextCenterP = {
+          x: st.fixedCornerP.x + centerOffsetP.x,
+          y: st.fixedCornerP.y + centerOffsetP.y,
+        };
+
+        g.position(nextCenterP);
+        st.previewCenterP = nextCenterP;
 
         g.getLayer()?.batchDraw();
         props.onSelectionUI();
@@ -366,123 +337,140 @@ export default function CornerSmartHandlesPro(props: {
   }
 
   useEffect(() => {
+    syncHandleScale();
     return () => endDrag(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
     <Group listening>
-      {corners.map((c) => (
-        <Group key={c.key}>
-          {/* Invisible hover zone for rotation */}
-          <Circle
-            x={c.x}
-            y={c.y}
-            radius={rotateRing}
-            fill="rgba(0,0,0,0.001)" // must not be fully transparent
-            listening
-            onMouseMove={() => {
-              if (dragRef.current) return;
+      {corners.map((c) => {
+        const rotateInner = BASE_KNOB_R + ROTATE_GAP;
+        const rotateOuter = BASE_ROTATE_RING + 6;
 
-              const local = pointerToLocal();
-              if (!local) return;
+        const rotateHot = hoverRotateCorner === c.key;
 
-              const d = cornerDist(local, c);
-              const outside = isOutsideRect(local, 2);
-
-              // For lockAspect items (trees), allow rotate even if inside hit rect
-              const canRotateHere = d > knobR + 2 && d <= rotateRing && (props.lockAspect ? true : outside);
-
-              if (canRotateHere) {
-                setHoverRotateCorner(c.key);
-                props.setWrapCursor(ROTATE_CURSOR);
-              } else {
-                if (d <= knobR + 2) {
-                  setHoverRotateCorner(null);
-                  props.setWrapCursor(cursorForCornerResize(c.key));
-                } else {
-                  setHoverRotateCorner(null);
-                  props.setWrapCursor("default");
-                }
-              }
-            }}
-            onMouseLeave={() => {
-              if (!dragRef.current) props.setWrapCursor("default");
-              setHoverRotateCorner(null);
-            }}
-            onMouseDown={(e) => {
-              e.cancelBubble = true;
-              if (dragRef.current) return;
-
-              const local = pointerToLocal();
-              if (!local) return;
-
-              const d = cornerDist(local, c);
-              const outside = isOutsideRect(local, 2);
-              const canRotateHere = d > knobR + 2 && d <= rotateRing && (props.lockAspect ? true : outside);
-
-              if (canRotateHere) beginDrag("rotate", c.key);
-            }}
-            onTouchStart={(e) => {
-              e.cancelBubble = true;
-              if (dragRef.current) return;
-
-              const local = pointerToLocal();
-              if (!local) return;
-
-              const d = cornerDist(local, c);
-              const outside = isOutsideRect(local, 2);
-              const canRotateHere = d > knobR + 2 && d <= rotateRing && (props.lockAspect ? true : outside);
-
-              if (canRotateHere) beginDrag("rotate", c.key);
-            }}
-          />
-
-          {/* Rotation ring hint */}
-          {hoverRotateCorner === c.key ? (
+        return (
+          <Group key={c.key}>
+            {/* Rotation ring hit zone (invisible fill, visible stroke on hover) */}
             <Circle
+              ref={(n) => {
+                ringRefs.current[c.key] = n;
+              }}
               x={c.x}
               y={c.y}
-              radius={rotateRing}
-              stroke="rgba(111, 102, 255, 0.35)"
-              strokeWidth={2}
-              dash={[6, 6]}
-              listening={false}
-            />
-          ) : null}
+              radius={BASE_ROTATE_RING}
+              fill="rgba(0,0,0,0.001)"
+              listening
+              perfectDrawEnabled={false}
+              hitStrokeWidth={HIT}
+              stroke={rotateHot ? "rgba(111,102,255,0.55)" : "rgba(0,0,0,0)"}
+              strokeWidth={rotateHot ? 2.2 : 0}
+              dash={rotateHot ? [6, 6] : undefined}
+              onMouseMove={() => {
+                if (dragRef.current) return;
 
-          {/* Resize knob */}
-          <Circle
-            x={c.x}
-            y={c.y}
-            radius={knobR}
-            fill="rgba(255,255,255,0.98)"
-            stroke="rgba(111, 102, 255, 0.65)"
-            strokeWidth={1.2}
-            shadowColor="rgba(111, 102, 255, 0.22)"
-            shadowBlur={10}
-            shadowOffsetX={0}
-            shadowOffsetY={6}
-            hitStrokeWidth={hitStroke}
-            onMouseMove={() => {
-              if (dragRef.current) return;
-              props.setWrapCursor(cursorForCornerResize(c.key));
-              setHoverRotateCorner(null);
-            }}
-            onMouseLeave={() => {
-              if (!dragRef.current) props.setWrapCursor("default");
-            }}
-            onMouseDown={(e) => {
-              e.cancelBubble = true;
-              beginDrag("resize", c.key);
-            }}
-            onTouchStart={(e) => {
-              e.cancelBubble = true;
-              beginDrag("resize", c.key);
-            }}
-          />
-        </Group>
-      ))}
+                const local = pointerToLocal();
+                if (!local) return;
+
+                const d = cornerDist(local, c);
+
+                // if near knob -> resize cursor
+                if (d <= BASE_KNOB_R + 2) {
+                  setHoverRotateCorner(null);
+                  props.setWrapCursor(cursorForCornerResize(c.key));
+                  return;
+                }
+
+                // if in outer ring -> rotate affordance (no special cursor)
+                if (d >= rotateInner && d <= rotateOuter) {
+                  setHoverRotateCorner(c.key);
+                  props.setWrapCursor("default");
+                  return;
+                }
+
+                setHoverRotateCorner(null);
+                props.setWrapCursor("default");
+              }}
+              onMouseLeave={() => {
+                if (!dragRef.current) props.setWrapCursor("default");
+                setHoverRotateCorner(null);
+              }}
+              onMouseDown={(e) => {
+                e.cancelBubble = true;
+                if (dragRef.current) return;
+
+                const local = pointerToLocal();
+                if (!local) return;
+
+                const d = cornerDist(local, c);
+                if (d >= rotateInner && d <= rotateOuter) beginDrag("rotate", c.key);
+              }}
+              onTouchStart={(e) => {
+                e.cancelBubble = true;
+                if (dragRef.current) return;
+
+                const local = pointerToLocal();
+                if (!local) return;
+
+                const d = cornerDist(local, c);
+                if (d >= rotateInner && d <= rotateOuter) beginDrag("rotate", c.key);
+                else if (d <= BASE_KNOB_R + 3) beginDrag("resize", c.key);
+              }}
+            />
+
+            {/* Small rotate badge (visual affordance; not a cursor) */}
+            {rotateHot ? (
+              <Group x={c.x + 14} y={c.y - 14} listening={false}>
+                <Circle
+                  x={0}
+                  y={0}
+                  radius={8}
+                  fill="rgba(255,255,255,0.92)"
+                  stroke="rgba(111,102,255,0.25)"
+                  strokeWidth={1}
+                  listening={false}
+                />
+                <Text
+                  x={-6}
+                  y={-7}
+                  text="↻"
+                  fontSize={12}
+                  fill="rgba(15,23,42,0.65)"
+                  listening={false}
+                />
+              </Group>
+            ) : null}
+
+            {/* Resize knob (always consistent; no weird hover morph) */}
+            <Circle
+              ref={(n) => {
+                knobRefs.current[c.key] = n;
+              }}
+              x={c.x}
+              y={c.y}
+              radius={BASE_KNOB_R}
+              fill="rgba(255,255,255,0.92)"
+              stroke="rgba(111,102,255,0.55)"
+              strokeWidth={1.2}
+              listening
+              perfectDrawEnabled={false}
+              hitStrokeWidth={HIT}
+              onMouseDown={(e) => {
+                e.cancelBubble = true;
+                if (dragRef.current) return;
+                beginDrag("resize", c.key);
+              }}
+              onMouseEnter={() => {
+                if (!dragRef.current) props.setWrapCursor(cursorForCornerResize(c.key));
+              }}
+              onMouseLeave={() => {
+                if (!dragRef.current) props.setWrapCursor("default");
+              }}
+            />
+          </Group>
+        );
+      })}
     </Group>
   );
 }

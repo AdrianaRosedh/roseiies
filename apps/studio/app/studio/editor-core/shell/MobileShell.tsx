@@ -1,14 +1,23 @@
+// apps/studio/app/studio/editor-core/shell/MobileShell.tsx
 "use client";
+
+import type { ComponentType } from "react";
 
 import CanvasStage from "../canvas";
 import MobileBottomBar from "./mobile/MobileBottomBar";
 
-import ContextSheet from "./sheets/ContextSheet";
-import ToolsSheet from "./sheets/ToolsSheet";
-import InspectorSheet from "./sheets/InspectorSheet";
-import ActionsSheet from "./sheets/ActionsSheet";
+import _ContextSheet from "./sheets/ContextSheet";
+import _ToolsSheet from "./sheets/ToolsSheet";
+import _InspectorSheet from "./sheets/InspectorSheet";
+import _ActionsSheet from "./sheets/ActionsSheet";
 
 import type { MobileSheetKind } from "./StudioShell";
+
+// ✅ TS fix: sheets may be typed as {} in their files; widen at boundary.
+const ContextSheet = _ContextSheet as unknown as ComponentType<any>;
+const ToolsSheet = _ToolsSheet as unknown as ComponentType<any>;
+const InspectorSheet = _InspectorSheet as unknown as ComponentType<any>;
+const ActionsSheet = _ActionsSheet as unknown as ComponentType<any>;
 
 export default function MobileShell(props: {
   module: any;
@@ -25,7 +34,6 @@ export default function MobileShell(props: {
   layoutsForGarden: any[];
   activeLayout: any;
 
-  // capabilities for actions sheet
   canCopy: boolean;
   canPaste: boolean;
   canDelete: boolean;
@@ -35,7 +43,6 @@ export default function MobileShell(props: {
   onDuplicate: () => void;
   onToggleLock: () => void;
 
-  // left toolbar props for ToolsSheet
   showGrid: boolean;
   setShowGrid: (v: boolean) => void;
   snapToGrid: boolean;
@@ -73,7 +80,6 @@ export default function MobileShell(props: {
         onClose={() => props.setMobileSheet(null)}
         module={props.module}
         store={props.store}
-        // toolbar props
         showGrid={props.showGrid}
         setShowGrid={props.setShowGrid}
         snapToGrid={props.snapToGrid}
