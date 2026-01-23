@@ -1,6 +1,7 @@
+// apps/studio/app/studio/editor-core/canvas/item/ItemNode.tsx
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Group, Rect, Text, Ellipse, Image as KonvaImage } from "react-konva";
 import type Konva from "konva";
 import type { CornerRadii, CurvaturePath, PolygonPath, StudioItem } from "../../types";
@@ -42,22 +43,36 @@ function isTree(item: StudioItem) {
 
 export type EditMode = "none" | "corners" | "polygon" | "curvature" | "bezier";
 
-function memoEqual(a: Props, b: Props) {
-  return (
-    a.item === b.item &&
-    a.selected === b.selected &&
-    a.locked === b.locked &&
-    a.stageScale === b.stageScale &&
-    a.editMode === b.editMode &&
-    a.panMode === b.panMode &&
-    a.treeImages === b.treeImages &&
-    a.soilImg === b.soilImg
-  );
+/* ---------------- Perf helpers ---------------- */
+
+function setShadowsEnabledDeep(node: Konva.Node, enabled: boolean) {
+  const anyNode = node as any;
+  if (typeof anyNode.shadowEnabled === "function") {
+    anyNode.shadowEnabled(enabled);
+  }
+
+  const children = (node as any).getChildren?.();
+  if (children && typeof children.forEach === "function") {
+    children.forEach((c: Konva.Node) => setShadowsEnabledDeep(c, enabled));
+  }
+}
+
+function scheduleIdle(fn: () => void) {
+  const w = window as any;
+  if (typeof w.requestIdleCallback === "function") {
+    w.requestIdleCallback(fn, { timeout: 250 });
+    return;
+  }
+  window.setTimeout(fn, 40);
 }
 
 type Props = {
   item: StudioItem;
   selected: boolean;
+
+  // When multi-selecting, we suppress per-item handles.
+  selectedCount?: number;
+
   locked: boolean;
   stageScale: number;
   editMode: EditMode;
@@ -74,6 +89,20 @@ type Props = {
   onSelectionUI: () => void;
 };
 
+function memoEqual(a: Props, b: Props) {
+  return (
+    a.item === b.item &&
+    a.selected === b.selected &&
+    a.selectedCount === b.selectedCount &&
+    a.locked === b.locked &&
+    a.stageScale === b.stageScale &&
+    a.editMode === b.editMode &&
+    a.panMode === b.panMode &&
+    a.treeImages === b.treeImages &&
+    a.soilImg === b.soilImg
+  );
+}
+
 function ItemNodeImpl(props: Props) {
   const groupRef = useRef<Konva.Group>(null);
   const rectRef = useRef<Konva.Rect>(null);
@@ -85,6 +114,13 @@ function ItemNodeImpl(props: Props) {
   // Draft geometry for edit modes (NO store writes during drag)
   const [draftCurv, setDraftCurv] = useState<CurvaturePath | null>(null);
   const [draftPoly, setDraftPoly] = useState<PolygonPath | null>(null);
+
+  const selectedCount = props.selectedCount ?? (props.selected ? 1 : 0);
+  const isMultiSelect = selectedCount > 1;
+
+  // Interaction state for perf toggles
+  const interactingRef = useRef(false);
+  const cacheScheduledRef = useRef(false);
 
   // register/unregister node
   useEffect(() => {
@@ -109,6 +145,19 @@ function ItemNodeImpl(props: Props) {
       setDraftPoly(structuredClone(props.item.meta.polygon));
     else setDraftPoly(null);
   }, [props.selected, props.editMode, props.item.id]);
+
+  // ✅ CRITICAL FIX:
+  // If this node was cached while unselected, the cache will hide overlays/handles.
+  // Clear cache immediately when it becomes selected OR enters an edit mode.
+  useEffect(() => {
+    const g = groupRef.current;
+    if (!g) return;
+
+    if (props.selected || props.editMode !== "none") {
+      g.clearCache();
+      g.getLayer()?.batchDraw();
+    }
+  }, [props.selected, props.editMode]);
 
   // Keep label readable only when group scaling changes
   const keepLabelReadable = useCallback(() => {
@@ -140,8 +189,6 @@ function ItemNodeImpl(props: Props) {
   const isSelected = props.selected;
   const radiusMax = Math.min(props.item.w, props.item.h) / 2;
 
-  const showLabel = isSelected || hovered || props.stageScale > 0.9;
-
   // Center pivot
   const cx = props.item.w / 2;
   const cy = props.item.h / 2;
@@ -151,12 +198,85 @@ function ItemNodeImpl(props: Props) {
     ? ([perCorner.tl, perCorner.tr, perCorner.br, perCorner.bl] as any)
     : clamp(s.radius ?? 0, 0, radiusMax);
 
-  const showCorners = isSelected && !props.locked && !isPillLike(props.item);
+  // ✅ Show handles immediately on select (single select only)
+  const showCorners = isSelected && !props.locked && !isPillLike(props.item) && !isMultiSelect;
 
   // Render priority: bezier > curvature > polygon > defaults
   const showBezier = Boolean(props.item.meta.bezier);
   const showCurv = Boolean(draftCurv ?? props.item.meta.curvature);
   const showPoly = Boolean(draftPoly ?? props.item.meta.polygon);
+
+  const selectionStroke = "rgba(111, 102, 255, 0.55)";
+  const selectionFill = "rgba(111, 102, 255, 0.06)";
+
+  const shouldCache = useMemo(() => {
+    if (props.locked) return true;
+    if (props.selected) return false;
+    if (props.editMode !== "none") return false;
+    return isTree(props.item) || isRectLike(props.item);
+  }, [props.locked, props.selected, props.editMode, props.item.type]);
+
+  const recacheNow = useCallback(() => {
+    const g = groupRef.current;
+    if (!g) return;
+    if (!shouldCache) return;
+
+    if (cacheScheduledRef.current) return;
+    cacheScheduledRef.current = true;
+
+    scheduleIdle(() => {
+      cacheScheduledRef.current = false;
+      const gg = groupRef.current;
+      if (!gg) return;
+      if (!shouldCache) return;
+
+      gg.cache({ pixelRatio: 1 });
+      gg.getLayer()?.batchDraw();
+    });
+  }, [shouldCache]);
+
+  useEffect(() => {
+    if (!shouldCache) return;
+    if (interactingRef.current) return;
+
+    const g = groupRef.current;
+    if (g) g.clearCache();
+    recacheNow();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    shouldCache,
+    props.item.x,
+    props.item.y,
+    props.item.w,
+    props.item.h,
+    props.item.r,
+    props.item.style.fill,
+    props.item.style.fillOpacity,
+    props.item.style.stroke,
+    props.item.style.strokeOpacity,
+    props.item.style.strokeWidth,
+    props.item.style.radius,
+    props.item.meta?.tree?.variant,
+    props.item.meta?.locked,
+  ]);
+
+  const onInteractionStart = useCallback(() => {
+    interactingRef.current = true;
+    const g = groupRef.current;
+    if (!g) return;
+
+    setShadowsEnabledDeep(g, false);
+    g.clearCache();
+  }, []);
+
+  const onInteractionEnd = useCallback(() => {
+    interactingRef.current = false;
+    const g = groupRef.current;
+    if (!g) return;
+
+    setShadowsEnabledDeep(g, true);
+    recacheNow();
+  }, [recacheNow]);
 
   return (
     <Group
@@ -168,13 +288,22 @@ function ItemNodeImpl(props: Props) {
       rotation={props.item.r}
       draggable={!props.locked && !props.panMode}
       opacity={props.locked ? 0.92 : 1}
+      hitStrokeWidth={isTree(props.item) ? 10 : 0}
       onClick={(e) => {
         e.cancelBubble = true;
         props.onSelect({ shiftKey: Boolean(e.evt?.shiftKey) });
+        // ensure UI updates immediately
+        props.onSelectionUI();
       }}
       onTap={(e) => {
         e.cancelBubble = true;
         props.onSelect({ shiftKey: false });
+        props.onSelectionUI();
+      }}
+      onDragStart={(e) => {
+        e.cancelBubble = true;
+        if (props.locked || props.panMode) return;
+        onInteractionStart();
       }}
       onDragMove={(e) => {
         e.cancelBubble = true;
@@ -185,11 +314,13 @@ function ItemNodeImpl(props: Props) {
         const nx = e.target.x() - cx;
         const ny = e.target.y() - cy;
         props.onCommit({ x: nx, y: ny });
+        onInteractionEnd();
       }}
       onTransformStart={(e) => {
         e.cancelBubble = true;
         const node = e.target as Konva.Group;
-        transformStartRef.current = { x: node.x(), y: node.y() }; // center point
+        transformStartRef.current = { x: node.x(), y: node.y() };
+        onInteractionStart();
       }}
       onTransform={() => {
         const node = groupRef.current;
@@ -233,6 +364,8 @@ function ItemNodeImpl(props: Props) {
           h: nextH,
           r: node.rotation(),
         });
+
+        onInteractionEnd();
       }}
       onMouseEnter={() => {
         setHovered(true);
@@ -296,7 +429,6 @@ function ItemNodeImpl(props: Props) {
         />
       ) : isRectLike(props.item) ? (
         <Group>
-          {/* AO shadow */}
           <Rect
             x={2.5}
             y={3.5}
@@ -335,9 +467,12 @@ function ItemNodeImpl(props: Props) {
               fillLinearGradientStartPoint={{ x: 0, y: 0 }}
               fillLinearGradientEndPoint={{ x: 0, y: props.item.h }}
               fillLinearGradientColorStops={[
-                0, "rgba(255,255,255,0.10)",
-                0.5, "rgba(255,255,255,0.02)",
-                1, "rgba(0,0,0,0.18)",
+                0,
+                "rgba(255,255,255,0.10)",
+                0.5,
+                "rgba(255,255,255,0.02)",
+                1,
+                "rgba(0,0,0,0.18)",
               ]}
               opacity={0.6}
               listening={false}
@@ -352,12 +487,52 @@ function ItemNodeImpl(props: Props) {
             strokeWidth={1.6}
             listening={false}
           />
+
+          {isSelected ? (
+            <Rect
+              width={props.item.w}
+              height={props.item.h}
+              cornerRadius={rectCornerRadius}
+              fill={selectionFill}
+              stroke={selectionStroke}
+              strokeWidth={1}
+              listening={false}
+            />
+          ) : null}
         </Group>
       ) : isTree(props.item) ? (
         <Group>
-          <Rect x={0} y={0} width={props.item.w} height={props.item.h} fill="rgba(0,0,0,0.001)" listening />
+          <Rect
+            x={0}
+            y={0}
+            width={props.item.w}
+            height={props.item.h}
+            fill="rgba(0,0,0,0.001)"
+            listening
+          />
+
           {treeImg ? (
-            <KonvaImage x={0} y={0} width={props.item.w} height={props.item.h} image={treeImg} listening={false} />
+            <KonvaImage
+              x={0}
+              y={0}
+              width={props.item.w}
+              height={props.item.h}
+              image={treeImg}
+              listening={false}
+            />
+          ) : null}
+
+          {isSelected ? (
+            <Rect
+              x={2}
+              y={2}
+              width={props.item.w - 4}
+              height={props.item.h - 4}
+              cornerRadius={Math.min(props.item.w, props.item.h) * 0.18}
+              stroke={selectionStroke}
+              strokeWidth={1.2}
+              listening={false}
+            />
           ) : null}
         </Group>
       ) : (
@@ -389,6 +564,7 @@ function ItemNodeImpl(props: Props) {
       {/* Live corners edit */}
       {isSelected &&
       !props.locked &&
+      !isMultiSelect &&
       props.editMode === "corners" &&
       isRectLike(props.item) &&
       !showBezier &&
@@ -414,7 +590,11 @@ function ItemNodeImpl(props: Props) {
       ) : null}
 
       {/* Curvature editor */}
-      {isSelected && !props.locked && props.editMode === "curvature" && (props.item.meta.curvature || draftCurv) ? (
+      {isSelected &&
+      !props.locked &&
+      !isMultiSelect &&
+      props.editMode === "curvature" &&
+      (props.item.meta.curvature || draftCurv) ? (
         <CurvatureEditorOverlay
           w={props.item.w}
           h={props.item.h}
@@ -425,7 +605,11 @@ function ItemNodeImpl(props: Props) {
       ) : null}
 
       {/* Polygon editor */}
-      {isSelected && !props.locked && props.editMode === "polygon" && (props.item.meta.polygon || draftPoly) ? (
+      {isSelected &&
+      !props.locked &&
+      !isMultiSelect &&
+      props.editMode === "polygon" &&
+      (props.item.meta.polygon || draftPoly) ? (
         <PolygonEditorOverlay
           w={props.item.w}
           h={props.item.h}
@@ -436,12 +620,28 @@ function ItemNodeImpl(props: Props) {
       ) : null}
 
       {/* Bezier editor */}
-      {isSelected && !props.locked && props.editMode === "bezier" && props.item.meta.bezier ? (
+      {isSelected &&
+      !props.locked &&
+      !isMultiSelect &&
+      props.editMode === "bezier" &&
+      props.item.meta.bezier ? (
         <BezierEditorOverlay
           w={props.item.w}
           h={props.item.h}
           path={props.item.meta.bezier}
           onChange={(next) => props.onCommit({ meta: { ...props.item.meta, bezier: next } })}
+        />
+      ) : null}
+
+      {false ? (
+        <Text
+          ref={textRef}
+          text={props.item.label ?? ""}
+          x={0}
+          y={-18}
+          fontSize={12}
+          fill="rgba(15,23,42,0.55)"
+          listening={false}
         />
       ) : null}
     </Group>

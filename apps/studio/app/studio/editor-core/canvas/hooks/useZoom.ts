@@ -1,4 +1,3 @@
-// apps/studio/app/studio/editor-core/canvas/hooks/useZoom.ts
 "use client";
 
 import { useCallback, useEffect, useRef } from "react";
@@ -8,18 +7,17 @@ import { clamp } from "../utils/math";
 export function useZoom(args: {
   stageRef: React.RefObject<Konva.Stage | null>;
 
-  // React-state camera (commit only)
   stageScale: number;
   setStageScale: (s: number) => void;
   stagePos: { x: number; y: number };
   setStagePos: (p: { x: number; y: number }) => void;
 
   updateSelectionUIRaf: () => void;
+  hasSelection?: boolean; // ✅ NEW
 }) {
   const liveScaleRef = useRef(args.stageScale);
   const livePosRef = useRef(args.stagePos);
 
-  // keep stage in sync when NOT zooming (external state changes)
   const zoomingRef = useRef(false);
   useEffect(() => {
     if (zoomingRef.current) return;
@@ -35,14 +33,12 @@ export function useZoom(args: {
     stage.batchDraw();
   }, [args.stageScale, args.stagePos.x, args.stagePos.y, args.stageRef]);
 
-  // commit after wheel settles
   const wheelCommitTimer = useRef<number | null>(null);
   function scheduleCommit() {
     if (wheelCommitTimer.current) window.clearTimeout(wheelCommitTimer.current);
     wheelCommitTimer.current = window.setTimeout(() => {
       wheelCommitTimer.current = null;
       zoomingRef.current = false;
-
       args.setStageScale(liveScaleRef.current);
       args.setStagePos(livePosRef.current);
     }, 90);
@@ -56,7 +52,7 @@ export function useZoom(args: {
 
       zoomingRef.current = true;
 
-      const oldScale = stage.scaleX(); // use stage as source of truth during interaction
+      const oldScale = stage.scaleX();
       const pointer = stage.getPointerPosition();
       if (!pointer) return;
 
@@ -68,7 +64,6 @@ export function useZoom(args: {
 
       const pos = stage.position();
 
-      // keep pointer fixed in world space
       const mousePointTo = {
         x: (pointer.x - pos.x) / oldScale,
         y: (pointer.y - pos.y) / oldScale,
@@ -79,7 +74,6 @@ export function useZoom(args: {
         y: pointer.y - mousePointTo.y * newScale,
       };
 
-      // ✅ imperative update
       stage.scale({ x: newScale, y: newScale });
       stage.position(nextPos);
       stage.batchDraw();
@@ -87,7 +81,7 @@ export function useZoom(args: {
       liveScaleRef.current = newScale;
       livePosRef.current = nextPos;
 
-      args.updateSelectionUIRaf();
+      if (args.hasSelection) args.updateSelectionUIRaf(); // ✅
       scheduleCommit();
     },
     [args]
@@ -154,7 +148,7 @@ export function useZoom(args: {
       pr.lastCenter = c;
       pr.lastDist = d;
 
-      args.updateSelectionUIRaf();
+      if (args.hasSelection) args.updateSelectionUIRaf(); // ✅
     },
     [args]
   );
@@ -165,7 +159,6 @@ export function useZoom(args: {
 
     zoomingRef.current = false;
 
-    // ✅ commit once at end
     args.setStageScale(liveScaleRef.current);
     args.setStagePos(livePosRef.current);
   }, [args]);

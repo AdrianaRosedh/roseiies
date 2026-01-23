@@ -4,7 +4,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { mod } from "../utils/math";
 
-function makeNoiseCanvas(size = 240) {
+/**
+ * ✅ Exported so other modules can import them (or namespace-import them).
+ * Your error indicates something is referencing useTextures.makeNoiseCanvas(...)
+ */
+export function makeNoiseCanvas(size = 240) {
   const c = document.createElement("canvas");
   c.width = size;
   c.height = size;
@@ -36,7 +40,7 @@ function makeNoiseCanvas(size = 240) {
   return c;
 }
 
-function makeLeafSpeckleCanvas(size = 420) {
+export function makeLeafSpeckleCanvas(size = 420) {
   const c = document.createElement("canvas");
   c.width = size;
   c.height = size;
@@ -96,7 +100,7 @@ function makeLeafSpeckleCanvas(size = 420) {
   return c;
 }
 
-function makeSoilCanvas(size = 520) {
+export function makeSoilCanvas(size = 520) {
   const c = document.createElement("canvas");
   c.width = size;
   c.height = size;
@@ -129,12 +133,21 @@ function makeSoilCanvas(size = 520) {
   return c;
 }
 
-function canvasToImage(canvas: HTMLCanvasElement): Promise<HTMLImageElement> {
+function canvasToImageBlobURL(
+  canvas: HTMLCanvasElement
+): Promise<{ img: HTMLImageElement; url: string }> {
   return new Promise((resolve, reject) => {
-    const img = new window.Image();
-    img.onload = () => resolve(img);
-    img.onerror = reject;
-    img.src = canvas.toDataURL("image/png");
+    canvas.toBlob((blob) => {
+      if (!blob) return reject(new Error("toBlob failed"));
+      const url = URL.createObjectURL(blob);
+      const img = new window.Image();
+      img.onload = () => resolve({ img, url });
+      img.onerror = (e) => {
+        URL.revokeObjectURL(url);
+        reject(e);
+      };
+      img.src = url;
+    }, "image/png");
   });
 }
 
@@ -164,19 +177,31 @@ export function useTextures(args: { stagePos: { x: number; y: number } }) {
 
   useEffect(() => {
     let alive = true;
+    const urls: string[] = [];
+
     (async () => {
-      const [nImg, lImg, sImg] = await Promise.all([
-        canvasToImage(makeNoiseCanvas(240)),
-        canvasToImage(makeLeafSpeckleCanvas(520)),
-        canvasToImage(makeSoilCanvas(520)),
+      const [n, l, s] = await Promise.all([
+        canvasToImageBlobURL(makeNoiseCanvas(240)),
+        canvasToImageBlobURL(makeLeafSpeckleCanvas(520)),
+        canvasToImageBlobURL(makeSoilCanvas(520)),
       ]);
-      if (!alive) return;
-      setNoiseImg(nImg);
-      setLeafImg(lImg);
-      setSoilImg(sImg);
+
+      if (!alive) {
+        URL.revokeObjectURL(n.url);
+        URL.revokeObjectURL(l.url);
+        URL.revokeObjectURL(s.url);
+        return;
+      }
+
+      urls.push(n.url, l.url, s.url);
+      setNoiseImg(n.img);
+      setLeafImg(l.img);
+      setSoilImg(s.img);
     })().catch(() => {});
+
     return () => {
       alive = false;
+      for (const u of urls) URL.revokeObjectURL(u);
     };
   }, []);
 

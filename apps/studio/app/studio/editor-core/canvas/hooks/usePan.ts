@@ -1,4 +1,3 @@
-// apps/studio/app/studio/editor-core/canvas/hooks/usePan.ts
 "use client";
 
 import { useCallback, useEffect, useRef } from "react";
@@ -30,7 +29,6 @@ export function usePan(args: {
 
   hasSelection?: boolean;
 
-  // ✅ NEW: placement mode
   placeMode?: { tool: any; keepOpen?: boolean } | null;
   onExitPlaceMode?: () => void;
 }) {
@@ -100,7 +98,6 @@ export function usePan(args: {
 
       const empty = isEmptyHit(e);
 
-      // ✅ Placement mode: single click on empty canvas places an item
       if (args.placeMode && empty && !args.panMode) {
         e.cancelBubble = true;
 
@@ -111,12 +108,10 @@ export function usePan(args: {
           y: world.y - 60,
         });
 
-        // keep placing unless caller wants to exit
         if (!args.placeMode.keepOpen) args.onExitPlaceMode?.();
         return;
       }
 
-      // Normal pan
       if (args.panMode || empty) {
         emptyDownRef.current = { x: pointer.x, y: pointer.y };
         didPanRef.current = false;
@@ -166,6 +161,7 @@ export function usePan(args: {
 
   const onStagePointerUp = useCallback(() => {
     if (emptyDownRef.current && !didPanRef.current && !args.panMode) {
+      // ✅ avoid redundant writes
       args.setSelectedIds([]);
       args.setToolbarBox(null);
     }

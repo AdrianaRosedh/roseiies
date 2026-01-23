@@ -1,4 +1,3 @@
-// apps/studio/app/studio/editor-core/useWorkspaceStore.ts
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -90,9 +89,11 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
     setMounted(true);
   }, [module, key]);
 
+  // ✅ PERF: debounce localStorage writes
   useEffect(() => {
     if (!mounted) return;
-    saveStore(state, key);
+    const t = window.setTimeout(() => saveStore(state, key), 250);
+    return () => window.clearTimeout(t);
   }, [state, mounted, key]);
 
   const [tool, setTool] = useState<ItemType>("bed");
@@ -108,8 +109,11 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
 
   const [clipboard, setClipboard] = useState<StudioItem[] | null>(null);
 
-  // ✅ NEW: preferred tree variant for insert
+  // ✅ preferred tree variant for insert
   const [treeVariant, setTreeVariant] = useState<TreeVariant>("tree-01");
+
+  // ✅ NEW: selectionVersion bumps when selected items are mutated (programmatic ops)
+  const [selectionVersion, setSelectionVersion] = useState(0);
 
   const doc = useMemo(() => {
     const id = state.activeLayoutId;
@@ -150,24 +154,65 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
   // ✅ alias expected by StudioShell
   const updateLayoutDoc = updateDoc;
 
+  /**
+   * ✅ NEW: batch update items in a single setState
+   * - avoids N renders for Align/Distribute/Order
+   * - merges meta/style shallowly
+   */
+  function updateItemsBatch(patches: Array<{ id: string; patch: Partial<StudioItem> }>) {
+    const layoutId = state.activeLayoutId;
+    if (!layoutId) return;
+    if (!patches.length) return;
+
+    // bump selectionVersion if any patch touches a selected id
+    const selectedSet = new Set(selectedIds);
+    let touchesSelection = false;
+    for (const p of patches) {
+      if (selectedSet.has(p.id)) {
+        touchesSelection = true;
+        break;
+      }
+    }
+
+    const map = new Map(patches.map((p) => [p.id, p.patch]));
+
+    setState((prev) => {
+      const baseDoc = (prev.docs[layoutId] ?? emptyDoc(module)) as LayoutDoc;
+      const nextItems = baseDoc.items.map((it) => {
+        const patch = map.get(it.id);
+        if (!patch) return it;
+
+        const next: StudioItem = { ...it, ...patch } as any;
+        if ((patch as any).meta) next.meta = { ...it.meta, ...(patch as any).meta };
+        if ((patch as any).style) next.style = { ...it.style, ...(patch as any).style };
+        return next;
+      });
+
+      return {
+        ...prev,
+        docs: {
+          ...prev.docs,
+          [layoutId]: { ...baseDoc, items: nextItems },
+        },
+        layouts: prev.layouts.map((l) =>
+          l.id === layoutId ? { ...l, updatedAt: new Date().toISOString() } : l
+        ),
+      };
+    });
+
+    if (touchesSelection) setSelectionVersion((v) => v + 1);
+  }
+
   function updateItem(id: string, patch: Partial<StudioItem>) {
-    updateDoc({ items: doc.items.map((it) => (it.id === id ? { ...it, ...patch } : it)) });
+    updateItemsBatch([{ id, patch }]);
   }
 
   function updateMeta(id: string, patch: Partial<StudioItem["meta"]>) {
-    updateDoc({
-      items: doc.items.map((it) =>
-        it.id === id ? { ...it, meta: { ...it.meta, ...patch } } : it
-      ),
-    });
+    updateItemsBatch([{ id, patch: { meta: patch as any } as any }]);
   }
 
   function updateStyle(id: string, patch: Partial<StudioItem["style"]>) {
-    updateDoc({
-      items: doc.items.map((it) =>
-        it.id === id ? { ...it, style: { ...it.style, ...patch } } : it
-      ),
-    });
+    updateItemsBatch([{ id, patch: { style: patch as any } as any }]);
   }
 
   function setActiveGarden(gardenId: string) {
@@ -335,14 +380,9 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
         status: args.type === "bed" ? "dormant" : undefined,
         public: args.type === "bed" ? false : undefined,
         plants: args.type === "bed" ? [] : undefined,
-
         tree:
           args.type === "tree"
-            ? {
-                species: "Tree",
-                canopyM: 3,
-                variant: treeVariant, // ✅ use chosen variant
-              }
+            ? { species: "Tree", canopyM: 3, variant: treeVariant }
             : undefined,
       },
       style: {
@@ -435,7 +475,6 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
     updateMeta(bedId, { plants: plants.filter((p) => p.id !== plantId) });
   }
 
-  // Keyboard shortcuts (existing)
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (isEditableTarget(e.target)) return;
@@ -523,13 +562,16 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
 
     updateDoc,
     updateLayoutDoc,
+
     updateItem,
+    updateItemsBatch, // ✅ NEW
     updateMeta,
     updateStyle,
 
-    // ✅ tree picker state
     treeVariant,
     setTreeVariant,
+
+    selectionVersion, // ✅ NEW
 
     setCursorWorld,
     setViewportCenterWorld,

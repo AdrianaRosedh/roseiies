@@ -6,6 +6,7 @@ import React, {
   useRef,
   useState,
   useLayoutEffect,
+  useEffect,
   type Dispatch,
   type SetStateAction,
 } from "react";
@@ -17,17 +18,15 @@ const TREE_VARIANTS: TreeVariant[] = ["tree-01", "tree-02", "tree-03", "tree-04"
 
 type SectionKey = "elements" | "properties" | "grid" | "quick";
 
+type AlignTo = "selection" | "plot";
+
 export default function LeftToolbar(props: {
   module: StudioModule;
   tool: ItemType;
-
-  // NOTE: some shells call setTool directly; we keep it required
   setTool: (t: ItemType) => void;
 
-  // Optional: only available in the “new” shell wiring
   quickInsert?: (t: ItemType) => void;
 
-  // ✅ placement mode (optional for backward compatibility)
   treePlacing?: boolean;
   setTreePlacing?: (v: boolean) => void;
 
@@ -56,8 +55,11 @@ export default function LeftToolbar(props: {
   onBringToFront?: () => void;
   onSendToBack?: () => void;
 
-  // Arrange
+  // ✅ NEW: Illustrator-style arrange
   canArrange?: boolean;
+  canDistribute?: boolean;
+  alignTo?: AlignTo;
+  setAlignTo?: (v: AlignTo) => void;
   onAlign?: (k: "left" | "center" | "right" | "top" | "middle" | "bottom") => void;
   onDistribute?: (axis: "x" | "y") => void;
 }) {
@@ -68,11 +70,11 @@ export default function LeftToolbar(props: {
     elements: true,
   });
 
-  const tools = useMemo(() => props.module.tools ?? [], [props.module.tools]);
-
   function toggle(k: SectionKey) {
     setOpen((prev) => ({ ...prev, [k]: !prev[k] }));
   }
+
+  const tools = useMemo(() => props.module.tools ?? [], [props.module.tools]);
 
   const [treePickerOpen, setTreePickerOpen] = useState(false);
   const treeBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -106,8 +108,21 @@ export default function LeftToolbar(props: {
     };
   }, [treePickerOpen]);
 
+  // ✅ Esc closes tree popover
+  useEffect(() => {
+    if (!treePickerOpen) return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      closeTreePicker();
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [treePickerOpen]);
+
   function onToolClick(t: ItemType) {
-    // If we have placement mode, switching away cancels it
     if (t !== "tree" && props.setTreePlacing) props.setTreePlacing(false);
 
     if (t === "tree") {
@@ -117,49 +132,22 @@ export default function LeftToolbar(props: {
     }
 
     props.setTool(t);
-
-    // Only do quick insert if host passed it
     props.quickInsert?.(t);
   }
 
   function chooseTree(v: TreeVariant) {
     props.setTreeVariant?.(v);
     props.setTool("tree");
-
-    // ✅ only enable placement mode if host passed a setter
     props.setTreePlacing?.(true);
-
     closeTreePicker();
   }
 
+  const alignTo = props.alignTo ?? "selection";
+
   return (
     <aside className="px-2 pb-2">
-      <div className="px-2 pt-1 text-[11px] text-black/45 leading-snug">
-        Click: place · Scroll: zoom · Space: pan · ⌘/Ctrl+Z · Esc: exit modes
-      </div>
-
-      {props.treePlacing ? (
-        <div className="mt-2 mx-2 rounded-2xl border border-black/10 bg-white/70 shadow-sm px-3 py-2 text-[12px] text-black/70">
-          <div className="flex items-center justify-between gap-2">
-            <div className="min-w-0">
-              Placing trees{" "}
-              <span className="text-black/40">({props.treeVariant ?? "tree-01"})</span>
-            </div>
-            <button
-              type="button"
-              onClick={() => props.setTreePlacing?.(false)}
-              className="h-7 w-7 rounded-full border border-black/10 bg-white/70 hover:bg-black/5 transition flex items-center justify-center"
-              title="Exit"
-            >
-              ✕
-            </button>
-          </div>
-          <div className="mt-1 text-[11px] text-black/45">Click on canvas to place. Esc to exit.</div>
-        </div>
-      ) : null}
-
       <div className="mt-2 space-y-2">
-        <Section title="Elements" open={open.elements} onToggle={() => toggle("elements")}>
+        <Section title="Tools" open={open.elements} onToggle={() => toggle("elements")}>
           <div className="space-y-2">
             {tools.map((t: any) => {
               const isTree = t.id === "tree";
@@ -176,13 +164,8 @@ export default function LeftToolbar(props: {
               );
             })}
           </div>
-
-          <div className="mt-2 text-[11px] text-black/40">
-            Tree: choose a style → then click on canvas to place.
-          </div>
         </Section>
 
-        {/* The rest of your sections can stay as-is; guarded with optional props */}
         <Section title="Quick" open={open.quick} onToggle={() => toggle("quick")}>
           <div className="grid grid-cols-3 gap-2">
             <MiniButton disabled={!props.canDuplicate} onClick={() => props.onDuplicate?.()}>
@@ -197,34 +180,121 @@ export default function LeftToolbar(props: {
           </div>
         </Section>
 
+        {/* ✅ Illustrator-style properties */}
         <Section title="Properties" open={open.properties} onToggle={() => toggle("properties")}>
-          <div className="text-[11px] text-black/55 mb-2">Arrange</div>
-          <div className="grid grid-cols-3 gap-2">
-            <MiniButton disabled={!props.canArrange} onClick={() => props.onAlign?.("left")}>Align L</MiniButton>
-            <MiniButton disabled={!props.canArrange} onClick={() => props.onAlign?.("center")}>Align C</MiniButton>
-            <MiniButton disabled={!props.canArrange} onClick={() => props.onAlign?.("right")}>Align R</MiniButton>
-            <MiniButton disabled={!props.canArrange} onClick={() => props.onAlign?.("top")}>Align T</MiniButton>
-            <MiniButton disabled={!props.canArrange} onClick={() => props.onAlign?.("middle")}>Align M</MiniButton>
-            <MiniButton disabled={!props.canArrange} onClick={() => props.onAlign?.("bottom")}>Align B</MiniButton>
+          <div className="rounded-2xl border border-black/10 bg-white/70 p-3 shadow-sm">
+            <div className="text-[12px] font-semibold text-black/70">Align Objects</div>
+
+            <div className="mt-3 grid grid-cols-3 gap-3">
+              <IconBtn
+                title="Align left"
+                disabled={!props.canArrange}
+                onClick={() => props.onAlign?.("left")}
+                icon={<IAlignLeft />}
+              />
+              <IconBtn
+                title="Align center"
+                disabled={!props.canArrange}
+                onClick={() => props.onAlign?.("center")}
+                icon={<IAlignCenter />}
+              />
+              <IconBtn
+                title="Align right"
+                disabled={!props.canArrange}
+                onClick={() => props.onAlign?.("right")}
+                icon={<IAlignRight />}
+              />
+            
+              <IconBtn
+                title="Align top"
+                disabled={!props.canArrange}
+                onClick={() => props.onAlign?.("top")}
+                icon={<IAlignTop />}
+              />
+              <IconBtn
+                title="Align middle"
+                disabled={!props.canArrange}
+                onClick={() => props.onAlign?.("middle")}
+                icon={<IAlignMiddle />}
+              />
+              <IconBtn
+                title="Align bottom"
+                disabled={!props.canArrange}
+                onClick={() => props.onAlign?.("bottom")}
+                icon={<IAlignBottom />}
+              />
+            </div>
+                      
+
+            <div className="mt-4 text-[12px] font-semibold text-black/70">Distribute Objects</div>
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <IconBtn
+                title="Distribute horizontal"
+                disabled={!props.canDistribute}
+                onClick={() => props.onDistribute?.("x")}
+                icon={<IDistributeX />}
+              />
+              <IconBtn
+                title="Distribute vertical"
+                disabled={!props.canDistribute}
+                onClick={() => props.onDistribute?.("y")}
+                icon={<IDistributeY />}
+              />
+            </div>
+
+
+            <div className="mt-4 flex items-center justify-between">
+              <div className="text-[12px] font-semibold text-black/70">Align To</div>
+              <div className="flex items-center gap-1 rounded-xl border border-black/10 bg-white/80 p-1">
+                <Seg
+                  active={alignTo === "selection"}
+                  onClick={() => props.setAlignTo?.("selection")}
+                  title="Selection"
+                >
+                  <ISelection />
+                </Seg>
+                <Seg
+                  active={alignTo === "plot"}
+                  onClick={() => props.setAlignTo?.("plot")}
+                  title="Plot"
+                >
+                  <IPlot />
+                </Seg>
+              </div>
+            </div>
           </div>
 
-          <div className="mt-2 grid grid-cols-2 gap-2">
-            <MiniButton disabled={!props.canArrange} onClick={() => props.onDistribute?.("x")}>Distribute X</MiniButton>
-            <MiniButton disabled={!props.canArrange} onClick={() => props.onDistribute?.("y")}>Distribute Y</MiniButton>
-          </div>
-
-          <div className="mt-4 text-[11px] text-black/55 mb-2">Order</div>
-          <div className="grid grid-cols-2 gap-2">
-            <MiniButton disabled={!props.canReorder} onClick={() => props.onBringForward?.()}>Bring fwd</MiniButton>
-            <MiniButton disabled={!props.canReorder} onClick={() => props.onSendBackward?.()}>Send back</MiniButton>
-            <MiniButton disabled={!props.canReorder} onClick={() => props.onBringToFront?.()}>To front</MiniButton>
-            <MiniButton disabled={!props.canReorder} onClick={() => props.onSendToBack?.()}>To back</MiniButton>
+          {/* Order controls still useful */}
+          <div className="mt-3 rounded-2xl border border-black/10 bg-white/70 p-3 shadow-sm">
+            <div className="text-[12px] font-semibold text-black/70">Order</div>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <MiniButton disabled={!props.canReorder} onClick={() => props.onBringForward?.()}>
+                Bring fwd
+              </MiniButton>
+              <MiniButton disabled={!props.canReorder} onClick={() => props.onSendBackward?.()}>
+                Send back
+              </MiniButton>
+              <MiniButton disabled={!props.canReorder} onClick={() => props.onBringToFront?.()}>
+                To front
+              </MiniButton>
+              <MiniButton disabled={!props.canReorder} onClick={() => props.onSendToBack?.()}>
+                To back
+              </MiniButton>
+            </div>
           </div>
         </Section>
 
         <Section title="Grid" open={open.grid} onToggle={() => toggle("grid")}>
-          <ToggleRow label="Show grid" value={!!props.showGrid} onChange={(v) => props.setShowGrid?.(v)} />
-          <ToggleRow label="Snap to grid" value={!!props.snapToGrid} onChange={(v) => props.setSnapToGrid?.(v)} />
+          <ToggleRow
+            label="Show grid"
+            value={!!props.showGrid}
+            onChange={(v) => props.setShowGrid?.(v)}
+          />
+          <ToggleRow
+            label="Snap to grid"
+            value={!!props.snapToGrid}
+            onChange={(v) => props.setSnapToGrid?.(v)}
+          />
         </Section>
       </div>
 
@@ -250,30 +320,26 @@ function TreePickerPopover(props: {
   onPick: (v: TreeVariant) => void;
 }) {
   const gap = 12;
-  const width = 460;
+  const width = 420;
 
   const rightX = props.anchor.right + gap;
   const leftX = props.anchor.left - gap - width;
   const fitsRight = rightX + width < window.innerWidth - 12;
 
   const x = Math.max(12, Math.min(fitsRight ? rightX : leftX, window.innerWidth - width - 12));
-  const y = Math.max(12, Math.min(props.anchor.top - 10, window.innerHeight - 320));
+  const y = Math.max(12, Math.min(props.anchor.top - 10, window.innerHeight - 300));
 
   return (
-    <div className="fixed z-9999" style={{ left: x, top: y, width }} role="dialog">
+    <div className="fixed z-9999" style={{ left: x, top: y, width }} role="dialog" aria-modal="true">
       <div className="rounded-3xl border border-black/10 bg-white/90 shadow-xl backdrop-blur p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="text-sm font-semibold text-black/80">Choose a tree</div>
-            <div className="text-[12px] text-black/45 mt-1">
-              After picking, you’ll be in placement mode (click on canvas to place).
-            </div>
-          </div>
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-sm font-semibold text-black/80">Choose a tree</div>
           <button
             type="button"
             onClick={props.onClose}
             className="h-9 w-9 rounded-full border border-black/10 bg-white/70 hover:bg-black/5 transition flex items-center justify-center"
             title="Close"
+            aria-label="Close"
           >
             ✕
           </button>
@@ -289,21 +355,16 @@ function TreePickerPopover(props: {
                 onClick={() => props.onPick(v)}
                 className={[
                   "rounded-2xl border bg-white/85 hover:bg-black/5 transition p-3",
-                  "flex flex-col items-center justify-center gap-2",
+                  "flex items-center justify-center",
                   active ? "border-black/20 ring-1 ring-black/10" : "border-black/10",
                 ].join(" ")}
                 title={v}
+                aria-label={v}
               >
                 <img src={`/images/trees/${v}.svg`} alt={v} className="h-16 w-16" draggable={false} />
-                <span className="text-[11px] text-black/55">{v}</span>
               </button>
             );
           })}
-        </div>
-
-        <div className="mt-3 text-[11px] text-black/45 flex items-center justify-between">
-          <span>Esc exits placement mode.</span>
-          <span className="opacity-70">No overlay.</span>
         </div>
       </div>
     </div>
@@ -312,9 +373,14 @@ function TreePickerPopover(props: {
 
 /* ---------------- UI bits ---------------- */
 
-function Section(props: { title: string; open: boolean; onToggle: () => void; children: React.ReactNode }) {
+function Section(props: {
+  title: string;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="rounded-2xl border border-black/10 bg-white/70 shadow-sm overflow-hidden">
+    <div className="rounded-2xl border border-black/10 bg-white/60 shadow-sm overflow-hidden">
       <button
         type="button"
         onClick={props.onToggle}
@@ -333,7 +399,12 @@ function Section(props: { title: string; open: boolean; onToggle: () => void; ch
         </span>
       </button>
 
-      <div className={["grid transition-[grid-template-rows] duration-250 ease-out", props.open ? "grid-rows-[1fr]" : "grid-rows-[0fr]"].join(" ")}>
+      <div
+        className={[
+          "grid transition-[grid-template-rows] duration-250 ease-out",
+          props.open ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
+        ].join(" ")}
+      >
         <div className="overflow-hidden">
           <div className="px-3 pb-3">{props.children}</div>
         </div>
@@ -345,7 +416,13 @@ function Section(props: { title: string; open: boolean; onToggle: () => void; ch
 function Chevron() {
   return (
     <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-      <path d="M6 8l4 4 4-4" stroke="rgba(15,23,42,0.65)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M6 8l4 4 4-4"
+        stroke="rgba(15,23,42,0.65)"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
@@ -383,7 +460,12 @@ function ElementButton(props: {
   );
 }
 
-function MiniButton(props: { children: React.ReactNode; onClick: () => void; disabled?: boolean; danger?: boolean }) {
+function MiniButton(props: {
+  children: React.ReactNode;
+  onClick: () => void;
+  disabled?: boolean;
+  danger?: boolean;
+}) {
   return (
     <button
       type="button"
@@ -406,7 +488,167 @@ function ToggleRow(props: { label: string; value: boolean; onChange: (v: boolean
   return (
     <label className="flex items-center justify-between gap-3 py-2">
       <span className="text-[12px] text-black/75">{props.label}</span>
-      <input type="checkbox" checked={props.value} onChange={(e) => props.onChange(e.target.checked)} className="h-4 w-4" />
+      <input
+        type="checkbox"
+        checked={props.value}
+        onChange={(e) => props.onChange(e.target.checked)}
+        className="h-4 w-4"
+      />
     </label>
+  );
+}
+
+function IconBtn(props: {
+  title: string;
+  icon: React.ReactNode;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      title={props.title}
+      aria-label={props.title}
+      onClick={props.onClick}
+      disabled={props.disabled}
+      className={[
+        "relative grid place-items-center",
+        "h-11 w-11 rounded-2xl border shadow-sm transition",
+        props.disabled
+          ? "opacity-35 cursor-not-allowed border-black/10 bg-white/60"
+          : "border-black/10 bg-white hover:bg-black/5",
+      ].join(" ")}
+    >
+      {/* ✅ force icon to be normal flow even if global css targets svg */}
+      <span className="relative block [&_svg]:static [&_svg]:block">
+        {props.icon}
+      </span>
+    </button>
+  );
+}
+
+function Seg(props: { active: boolean; title: string; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      title={props.title}
+      aria-label={props.title}
+      onClick={props.onClick}
+      className={[
+        "h-9 w-9 rounded-lg border transition flex items-center justify-center",
+        props.active ? "border-black/20 bg-black/5" : "border-black/10 bg-white hover:bg-black/5",
+      ].join(" ")}
+    >
+      {props.children}
+    </button>
+  );
+}
+
+/* ---------------- Icons (simple, clean, modern) ---------------- */
+
+const S = "rgba(15,23,42,0.65)";
+
+function IconBase(props: { children: React.ReactNode }) {
+  return (
+    <svg
+      className="static block"   // ✅ prevents stacking if global css hits svg
+      width="18"
+      height="18"
+      viewBox="0 0 18 18"
+      fill="none"
+      aria-hidden="true"
+    >
+      {props.children}
+    </svg>
+  );
+}
+
+function IAlignLeft() {
+  return (
+    <IconBase>
+      <path d="M3 3v12" stroke={S} strokeWidth="1.6" strokeLinecap="round" />
+      <rect x="5.2" y="5" width="8.8" height="3" rx="1.2" fill="rgba(15,23,42,0.18)" />
+      <rect x="5.2" y="10" width="6.6" height="3" rx="1.2" fill="rgba(15,23,42,0.18)" />
+    </IconBase>
+  );
+}
+function IAlignCenter() {
+  return (
+    <IconBase>
+      <path d="M9 3v12" stroke={S} strokeWidth="1.6" strokeLinecap="round" />
+      <rect x="4.2" y="5" width="9.6" height="3" rx="1.2" fill="rgba(15,23,42,0.18)" />
+      <rect x="5.4" y="10" width="7.2" height="3" rx="1.2" fill="rgba(15,23,42,0.18)" />
+    </IconBase>
+  );
+}
+function IAlignRight() {
+  return (
+    <IconBase>
+      <path d="M15 3v12" stroke={S} strokeWidth="1.6" strokeLinecap="round" />
+      <rect x="4" y="5" width="8.8" height="3" rx="1.2" fill="rgba(15,23,42,0.18)" />
+      <rect x="6.2" y="10" width="6.6" height="3" rx="1.2" fill="rgba(15,23,42,0.18)" />
+    </IconBase>
+  );
+}
+function IAlignTop() {
+  return (
+    <IconBase>
+      <path d="M3 3h12" stroke={S} strokeWidth="1.6" strokeLinecap="round" />
+      <rect x="5" y="5.2" width="3" height="8.8" rx="1.2" fill="rgba(15,23,42,0.18)" />
+      <rect x="10" y="5.2" width="3" height="6.6" rx="1.2" fill="rgba(15,23,42,0.18)" />
+    </IconBase>
+  );
+}
+function IAlignMiddle() {
+  return (
+    <IconBase>
+      <path d="M3 9h12" stroke={S} strokeWidth="1.6" strokeLinecap="round" />
+      <rect x="5" y="4.2" width="3" height="9.6" rx="1.2" fill="rgba(15,23,42,0.18)" />
+      <rect x="10" y="5.4" width="3" height="7.2" rx="1.2" fill="rgba(15,23,42,0.18)" />
+    </IconBase>
+  );
+}
+function IAlignBottom() {
+  return (
+    <IconBase>
+      <path d="M3 15h12" stroke={S} strokeWidth="1.6" strokeLinecap="round" />
+      <rect x="5" y="4" width="3" height="8.8" rx="1.2" fill="rgba(15,23,42,0.18)" />
+      <rect x="10" y="6.2" width="3" height="6.6" rx="1.2" fill="rgba(15,23,42,0.18)" />
+    </IconBase>
+  );
+}
+function IDistributeX() {
+  return (
+    <IconBase>
+      <path d="M4 4v10" stroke={S} strokeWidth="1.4" strokeLinecap="round" opacity="0.7" />
+      <path d="M14 4v10" stroke={S} strokeWidth="1.4" strokeLinecap="round" opacity="0.7" />
+      <rect x="6" y="5.5" width="2.8" height="7" rx="1.1" fill="rgba(15,23,42,0.18)" />
+      <rect x="10.2" y="5.5" width="2.8" height="7" rx="1.1" fill="rgba(15,23,42,0.18)" />
+    </IconBase>
+  );
+}
+function IDistributeY() {
+  return (
+    <IconBase>
+      <path d="M4 4h10" stroke={S} strokeWidth="1.4" strokeLinecap="round" opacity="0.7" />
+      <path d="M4 14h10" stroke={S} strokeWidth="1.4" strokeLinecap="round" opacity="0.7" />
+      <rect x="5.5" y="6" width="7" height="2.8" rx="1.1" fill="rgba(15,23,42,0.18)" />
+      <rect x="5.5" y="10.2" width="7" height="2.8" rx="1.1" fill="rgba(15,23,42,0.18)" />
+    </IconBase>
+  );
+}
+function ISelection() {
+  return (
+    <IconBase>
+      <rect x="4" y="4" width="10" height="10" rx="2" stroke={S} strokeWidth="1.4" strokeDasharray="2.2 2.2" />
+    </IconBase>
+  );
+}
+function IPlot() {
+  return (
+    <IconBase>
+      <rect x="3.5" y="3.5" width="11" height="11" rx="2" stroke={S} strokeWidth="1.4" />
+      <rect x="6" y="6" width="6" height="6" rx="1.5" fill="rgba(15,23,42,0.12)" />
+    </IconBase>
   );
 }

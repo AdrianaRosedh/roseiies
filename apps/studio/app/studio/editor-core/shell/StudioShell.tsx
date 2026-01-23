@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { LayoutDoc, StudioModule } from "../types";
+import type { LayoutDoc, StudioModule, StudioItem } from "../types";
 import type { PortalContext } from "../../../lib/portal/getPortalContext";
 
 import TopBar from "../TopBar";
@@ -15,14 +15,17 @@ import MobileShell from "./MobileShell";
 import PanelHeader from "./desktop/PanelHeader";
 import CollapsedRail from "./desktop/CollapsedRail";
 
-// ✅ Keep this canonical here (shell version) so anything under /shell can import it.
-// If you ALSO export it from ../StudioShell.tsx, that's fine—just keep them identical.
-export type MobileSheetKind =
-  | "context"
-  | "tools"
-  | "inspector"
-  | "more"
-  | null;
+export type MobileSheetKind = "context" | "tools" | "inspector" | "more" | null;
+
+type AlignTo = "selection" | "plot";
+
+function boundsOf(items: StudioItem[]) {
+  const minX = Math.min(...items.map((i) => i.x));
+  const minY = Math.min(...items.map((i) => i.y));
+  const maxX = Math.max(...items.map((i) => i.x + i.w));
+  const maxY = Math.max(...items.map((i) => i.y + i.h));
+  return { minX, minY, maxX, maxY, w: maxX - minX, h: maxY - minY };
+}
 
 export default function StudioShell(props: {
   module: StudioModule;
@@ -32,7 +35,6 @@ export default function StudioShell(props: {
 }) {
   const { module, store, portal, onBack } = props;
 
-  // ✅ HARD lock page scroll for canvas apps (prevents “slide down”)
   useEffect(() => {
     const html = document.documentElement;
     const body = document.body;
@@ -52,7 +54,6 @@ export default function StudioShell(props: {
     };
   }, []);
 
-  // ✅ Tree placement mode (single click to place on canvas)
   const [treePlacing, setTreePlacing] = useState(false);
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -62,25 +63,21 @@ export default function StudioShell(props: {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [treePlacing]);
 
-  // Desktop rails
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
 
-  // Canvas toggles
   const [showGrid, setShowGrid] = useState(true);
   const [snapToGrid, setSnapToGrid] = useState(false);
   const SNAP_STEP = 20;
 
-  // Mobile sheets
+  const [alignTo, setAlignTo] = useState<AlignTo>("selection");
+
   const [mobileSheet, setMobileSheet] = useState<MobileSheetKind>(null);
   const toggleSheet = (k: Exclude<MobileSheetKind, null>) =>
     setMobileSheet((v: MobileSheetKind) => (v === k ? null : k));
 
-  // Context (garden/layout)
   const activeGarden = useMemo(
-    () =>
-      store.state.gardens.find((g: any) => g.id === store.state.activeGardenId) ??
-      null,
+    () => store.state.gardens.find((g: any) => g.id === store.state.activeGardenId) ?? null,
     [store.state]
   );
 
@@ -92,9 +89,7 @@ export default function StudioShell(props: {
   }, [store.state]);
 
   const activeLayout = useMemo(
-    () =>
-      store.state.layouts.find((l: any) => l.id === store.state.activeLayoutId) ??
-      null,
+    () => store.state.layouts.find((l: any) => l.id === store.state.activeLayoutId) ?? null,
     [store.state]
   );
 
@@ -104,19 +99,20 @@ export default function StudioShell(props: {
     return store.state.docs[id] ?? store.emptyDoc();
   }, [store.state.activeLayoutId, store.state.docs]);
 
-  // Capabilities
   const canCopy = store.selectedIds.length > 0;
   const canPaste = !!store.clipboard;
   const canDelete = store.selectedIds.length > 0;
 
-  // Selection helpers
-  const selectedItems = store.selectedItems ?? [];
+  const selectedItems: StudioItem[] = store.selectedItems ?? [];
   const anyLocked = selectedItems.some((it: any) => Boolean(it?.meta?.locked));
 
   const canDuplicate = store.selectedIds.length > 0;
   const canLock = store.selectedIds.length > 0;
   const canDeleteAction = store.selectedIds.length > 0;
   const canReorder = store.selectedIds.length > 0;
+
+  const canArrange = store.selectedIds.length >= 2 && !anyLocked;
+  const canDistribute = store.selectedIds.length >= 3 && !anyLocked;
 
   function onDuplicate() {
     store.copySelected?.();
@@ -126,56 +122,66 @@ export default function StudioShell(props: {
   function onToggleLock() {
     if (!selectedItems.length) return;
     const nextLocked = !anyLocked;
-    selectedItems.forEach((it: any) => {
-      store.updateItem?.(it.id, { meta: { ...it.meta, locked: nextLocked } });
-    });
+    const patches = selectedItems.map((it: any) => ({
+      id: it.id,
+      patch: { meta: { ...it.meta, locked: nextLocked } },
+    }));
+    store.updateItemsBatch?.(patches);
   }
 
-  // Layers / order helpers
+  // snap helper for programmatic ops (do NOT snap trees)
+  function snapPatch(id: string, patch: any) {
+    const it = (doc.items ?? []).find((x: any) => x.id === id);
+    const isTree = it?.type === "tree";
+    if (!snapToGrid || isTree) return patch;
+
+    const round = (v: number) => Math.round(v / SNAP_STEP) * SNAP_STEP;
+    const next = { ...patch };
+
+    if (typeof next.x === "number") next.x = round(next.x);
+    if (typeof next.y === "number") next.y = round(next.y);
+    if (typeof next.w === "number") next.w = Math.max(1, round(next.w));
+    if (typeof next.h === "number") next.h = Math.max(1, round(next.h));
+
+    return next;
+  }
+
   function bringForward() {
     if (!selectedItems.length) return;
-    selectedItems.forEach((it: any) =>
-      store.updateItem?.(it.id, { order: (it.order ?? 0) + 1 })
+    store.updateItemsBatch?.(
+      selectedItems.map((it: any) => ({ id: it.id, patch: { order: (it.order ?? 0) + 1 } }))
     );
   }
 
   function sendBackward() {
     if (!selectedItems.length) return;
-    selectedItems.forEach((it: any) =>
-      store.updateItem?.(it.id, { order: (it.order ?? 0) - 1 })
+    store.updateItemsBatch?.(
+      selectedItems.map((it: any) => ({ id: it.id, patch: { order: (it.order ?? 0) - 1 } }))
     );
   }
 
   function bringToFront() {
     if (!selectedItems.length) return;
-    const maxOrder = (doc.items ?? []).reduce(
-      (m: number, it: any) => Math.max(m, it.order ?? 0),
-      0
-    );
-    const sorted = [...selectedItems].sort(
-      (a: any, b: any) => (a.order ?? 0) - (b.order ?? 0)
-    );
-    sorted.forEach((it: any, idx: number) =>
-      store.updateItem?.(it.id, { order: maxOrder + 1 + idx })
+
+    const maxOrder = (doc.items ?? []).reduce((m: number, it: any) => Math.max(m, it.order ?? 0), 0);
+    const sorted = [...selectedItems].sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0));
+
+    store.updateItemsBatch?.(
+      sorted.map((it: any, idx: number) => ({ id: it.id, patch: { order: maxOrder + 1 + idx } }))
     );
   }
 
   function sendToBack() {
     if (!selectedItems.length) return;
-    const minOrder = (doc.items ?? []).reduce(
-      (m: number, it: any) => Math.min(m, it.order ?? 0),
-      0
-    );
-    const sorted = [...selectedItems].sort(
-      (a: any, b: any) => (a.order ?? 0) - (b.order ?? 0)
-    );
-    sorted.forEach((it: any, idx: number) =>
-      store.updateItem?.(it.id, { order: minOrder - sorted.length + idx })
+
+    const minOrder = (doc.items ?? []).reduce((m: number, it: any) => Math.min(m, it.order ?? 0), 0);
+    const sorted = [...selectedItems].sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0));
+
+    store.updateItemsBatch?.(
+      sorted.map((it: any, idx: number) => ({ id: it.id, patch: { order: minOrder - sorted.length + idx } }))
     );
   }
 
-  // ✅ Keyboard shortcuts for layers:
-  // ⌘] bring forward, ⌘[ send backward, ⌘⇧] to front, ⌘⇧[ to back
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
@@ -186,7 +192,6 @@ export default function StudioShell(props: {
         if (e.shiftKey) bringToFront();
         else bringForward();
       }
-
       if (e.key === "[") {
         e.preventDefault();
         if (e.shiftKey) sendToBack();
@@ -199,26 +204,86 @@ export default function StudioShell(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedItems, doc.items]);
 
-  // ✅ Snap wrapper for canvas commits
-  // ✅ IMPORTANT: do NOT snap trees (prevents “bounce back”)
-  function updateItemSnapped(id: string, patch: any) {
-    const it = (doc.items ?? []).find((x: any) => x.id === id);
-    const isTree = it?.type === "tree";
+  function getAlignFrame(): { x: number; y: number; w: number; h: number } | null {
+    if (selectedItems.length < 2) return null;
 
-    if (!snapToGrid || isTree) return store.updateItem?.(id, patch);
+    if (alignTo === "plot") {
+      return { x: 0, y: 0, w: doc.canvas.width, h: doc.canvas.height };
+    }
 
-    const round = (v: number) => Math.round(v / SNAP_STEP) * SNAP_STEP;
-    const next = { ...patch };
-
-    if (typeof next.x === "number") next.x = round(next.x);
-    if (typeof next.y === "number") next.y = round(next.y);
-    if (typeof next.w === "number") next.w = Math.max(1, round(next.w));
-    if (typeof next.h === "number") next.h = Math.max(1, round(next.h));
-
-    return store.updateItem?.(id, next);
+    const b = boundsOf(selectedItems);
+    return { x: b.minX, y: b.minY, w: b.w, h: b.h };
   }
 
-  // ✅ Shared canvasProps (desktop + mobile)
+  function alignSelected(k: "left" | "center" | "right" | "top" | "middle" | "bottom") {
+    if (!canArrange) return;
+    const frame = getAlignFrame();
+    if (!frame) return;
+
+    const { x, y, w, h } = frame;
+
+    const patches: Array<{ id: string; patch: Partial<StudioItem> }> = [];
+
+    selectedItems.forEach((it) => {
+      if (it.meta?.locked) return;
+
+      let nx = it.x;
+      let ny = it.y;
+
+      if (k === "left") nx = x;
+      if (k === "center") nx = x + w / 2 - it.w / 2;
+      if (k === "right") nx = x + w - it.w;
+
+      if (k === "top") ny = y;
+      if (k === "middle") ny = y + h / 2 - it.h / 2;
+      if (k === "bottom") ny = y + h - it.h;
+
+      patches.push({ id: it.id, patch: snapPatch(it.id, { x: nx, y: ny }) });
+    });
+
+    store.updateItemsBatch?.(patches);
+  }
+
+  function distributeSelected(axis: "x" | "y") {
+    if (!canDistribute) return;
+
+    const items = [...selectedItems].filter((it) => !it.meta?.locked);
+    if (items.length < 3) return;
+
+    const patches: Array<{ id: string; patch: Partial<StudioItem> }> = [];
+
+    if (axis === "x") {
+      const sorted = items.sort((a, b) => a.x - b.x);
+      const b = boundsOf(sorted);
+      const totalW = sorted.reduce((sum, it) => sum + it.w, 0);
+      const gaps = sorted.length - 1;
+      const gap = gaps > 0 ? (b.w - totalW) / gaps : 0;
+
+      let cursor = b.minX;
+      sorted.forEach((it) => {
+        patches.push({ id: it.id, patch: snapPatch(it.id, { x: cursor, y: it.y }) });
+        cursor += it.w + gap;
+      });
+
+      store.updateItemsBatch?.(patches);
+      return;
+    }
+
+    const sorted = items.sort((a, b) => a.y - b.y);
+    const b = boundsOf(sorted);
+    const totalH = sorted.reduce((sum, it) => sum + it.h, 0);
+    const gaps = sorted.length - 1;
+    const gap = gaps > 0 ? (b.h - totalH) / gaps : 0;
+
+    let cursor = b.minY;
+    sorted.forEach((it) => {
+      patches.push({ id: it.id, patch: snapPatch(it.id, { x: it.x, y: cursor }) });
+      cursor += it.h + gap;
+    });
+
+    store.updateItemsBatch?.(patches);
+  }
+
   const canvasProps = {
     module,
     doc,
@@ -231,7 +296,7 @@ export default function StudioShell(props: {
     stagePos: store.stagePos,
     setStagePos: store.setStagePos,
     onAddItemAtWorld: store.addItemAtWorld,
-    onUpdateItem: updateItemSnapped,
+    onUpdateItem: (id: string, patch: any) => store.updateItem?.(id, snapPatch(id, patch)),
     onUpdateCanvas: (patch: Partial<LayoutDoc["canvas"]>) =>
       store.updateLayoutDoc({ canvas: { ...doc.canvas, ...patch } }),
     setCursorWorld: store.setCursorWorld,
@@ -241,7 +306,9 @@ export default function StudioShell(props: {
     onDeleteSelected: store.deleteSelected,
     showGrid,
 
-    // ✅ placement mode goes into CanvasStage
+    // ✅ NEW: lets CanvasStage refresh transformer/toolbar after batch ops
+    selectionVersion: store.selectionVersion,
+
     treePlacing,
     setTreePlacing,
   };
@@ -282,38 +349,25 @@ export default function StudioShell(props: {
       />
 
       <div className="flex-1 overflow-hidden">
-        {/* Desktop */}
         <div className="hidden md:flex gap-3 mt-3 h-full overflow-hidden px-3 pb-3">
-          {/* LEFT */}
-          <div
-            className="shrink-0 transition-[width] duration-300 ease-out"
-            style={{ width: leftW }}
-          >
+          <div className="shrink-0 transition-[width] duration-300 ease-out" style={{ width: leftW }}>
             <div className="h-full rounded-2xl border border-black/10 bg-white/60 shadow-sm backdrop-blur overflow-hidden">
               {leftOpen ? (
                 <div className="h-full p-3 overflow-hidden flex flex-col">
-                  <PanelHeader
-                    title="Tools"
-                    side="left"
-                    onCollapse={() => setLeftOpen(false)}
-                  />
+                  <PanelHeader title="Tools" side="left" onCollapse={() => setLeftOpen(false)} />
                   <div className="pt-2 flex-1 overflow-auto">
                     <LeftToolbar
                       module={module}
                       tool={store.tool}
                       setTool={(t: any) => {
-                        // ✅ if user leaves tree tool, exit placement mode
                         if (t !== "tree") setTreePlacing(false);
                         store.setTool(t);
                       }}
-                      // ✅ optional: toolbar can decide when to insert
                       quickInsert={(t: any) => store.quickInsert?.(t)}
-                      // ✅ pass tree variant workflow through if you have it
                       treeVariant={store.treeVariant}
                       setTreeVariant={store.setTreeVariant}
                       treePlacing={treePlacing}
                       setTreePlacing={setTreePlacing}
-                      // Quick actions
                       canDuplicate={canDuplicate}
                       canLock={canLock}
                       canDelete={canDeleteAction}
@@ -321,48 +375,39 @@ export default function StudioShell(props: {
                       onDuplicate={onDuplicate}
                       onToggleLock={onToggleLock}
                       onDelete={store.deleteSelected}
-                      // Snap / Grid
                       showGrid={showGrid}
                       setShowGrid={setShowGrid}
                       snapToGrid={snapToGrid}
                       setSnapToGrid={setSnapToGrid}
-                      // Layers / Order
                       canReorder={canReorder}
                       onBringForward={bringForward}
                       onSendBackward={sendBackward}
                       onBringToFront={bringToFront}
                       onSendToBack={sendToBack}
+                      canArrange={canArrange}
+                      canDistribute={canDistribute}
+                      alignTo={alignTo}
+                      setAlignTo={setAlignTo}
+                      onAlign={alignSelected}
+                      onDistribute={distributeSelected}
                     />
                   </div>
                 </div>
               ) : (
-                <CollapsedRail
-                  side="left"
-                  title="Tools"
-                  onExpand={() => setLeftOpen(true)}
-                />
+                <CollapsedRail side="left" title="Tools" onExpand={() => setLeftOpen(true)} />
               )}
             </div>
           </div>
 
-          {/* CENTER */}
           <div className="flex-1 rounded-2xl border border-black/10 bg-white/40 shadow-sm overflow-hidden relative">
             <CanvasStage {...canvasProps} />
           </div>
 
-          {/* RIGHT */}
-          <div
-            className="shrink-0 transition-[width] duration-300 ease-out"
-            style={{ width: rightW }}
-          >
+          <div className="shrink-0 transition-[width] duration-300 ease-out" style={{ width: rightW }}>
             <div className="h-full rounded-2xl border border-black/10 bg-white/60 shadow-sm backdrop-blur overflow-hidden">
               {rightOpen ? (
                 <div className="h-full p-3 overflow-hidden flex flex-col">
-                  <PanelHeader
-                    title="Inspector"
-                    side="right"
-                    onCollapse={() => setRightOpen(false)}
-                  />
+                  <PanelHeader title="Inspector" side="right" onCollapse={() => setRightOpen(false)} />
                   <div className="pt-2 flex-1 overflow-auto">
                     <Inspector
                       module={module}
@@ -379,17 +424,12 @@ export default function StudioShell(props: {
                   </div>
                 </div>
               ) : (
-                <CollapsedRail
-                  side="right"
-                  title="Inspector"
-                  onExpand={() => setRightOpen(true)}
-                />
+                <CollapsedRail side="right" title="Inspector" onExpand={() => setRightOpen(true)} />
               )}
             </div>
           </div>
         </div>
 
-        {/* Mobile */}
         <MobileShell
           module={module}
           store={store}

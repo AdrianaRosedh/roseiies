@@ -30,6 +30,9 @@ import ItemNode from "./item/ItemNode";
 
 type EditMode = "none" | "corners" | "polygon" | "curvature" | "bezier";
 
+const MIN_PLOT_W = 640;
+const MIN_PLOT_H = 420;
+
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
@@ -84,16 +87,14 @@ export default function CanvasStage(props: {
   onPasteAtCursor: () => void;
   onDeleteSelected: () => void;
 
-  // ✅ shell-controlled
   showGrid?: boolean;
 
-  // ✅ snap guides
   snapToGrid?: boolean;
   snapStep?: number;
   cursorWorld?: { x: number; y: number } | null;
+
   treePlacing?: boolean;
   setTreePlacing?: (v: boolean) => void;
-
 }) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<Konva.Stage>(null);
@@ -112,6 +113,9 @@ export default function CanvasStage(props: {
 
   const [constrainView, setConstrainView] = useState(true);
 
+  const selectedIdsKey = useMemo(() => props.selectedIds.join("|"), [props.selectedIds]);
+  const selectedSet = useMemo(() => new Set(props.selectedIds), [props.selectedIds]);
+
   useEffect(() => {
     if (editPlot) setShowPlotBoundary(true);
   }, [editPlot]);
@@ -119,16 +123,23 @@ export default function CanvasStage(props: {
   const plotW = draftCanvas?.w ?? props.doc.canvas.width;
   const plotH = draftCanvas?.h ?? props.doc.canvas.height;
 
-  const MIN_PLOT_W = 640;
-  const MIN_PLOT_H = 420;
+  /**
+   * ✅ CRITICAL: use live Konva stage scale while wheel/pinch is happening.
+   * React `props.stageScale` lags behind (committed after 90ms), which causes clamp jitter/bounce.
+   */
+  const getLiveScale = useCallback(() => {
+    const stage = stageRef.current;
+    const s = stage?.scaleX?.();
+    return typeof s === "number" && isFinite(s) ? s : props.stageScale;
+  }, [props.stageScale]);
 
-  // keeps plot reachable in viewport
   const clampStagePosToPlot = useCallback(
     (pos: { x: number; y: number }) => {
       const pad = 90;
 
-      const scaledW = plotW * props.stageScale;
-      const scaledH = plotH * props.stageScale;
+      const liveScale = getLiveScale();
+      const scaledW = plotW * liveScale;
+      const scaledH = plotH * liveScale;
 
       const centerX = (stageSize.w - scaledW) / 2;
       const centerY = (stageSize.h - scaledH) / 2;
@@ -149,15 +160,21 @@ export default function CanvasStage(props: {
         maxY = pad;
       }
 
-      return {
+      const clamped = {
         x: Math.max(minX, Math.min(maxX, pos.x)),
         y: Math.max(minY, Math.min(maxY, pos.y)),
       };
+
+      // tiny epsilon prevents “micro-jitter” at bounds
+      const EPS = 0.15;
+      return {
+        x: Math.abs(clamped.x - pos.x) < EPS ? pos.x : clamped.x,
+        y: Math.abs(clamped.y - pos.y) < EPS ? pos.y : clamped.y,
+      };
     },
-    [plotW, plotH, props.stageScale, stageSize.w, stageSize.h]
+    [plotW, plotH, stageSize.w, stageSize.h, getLiveScale]
   );
 
-  // ✅ IMPORTANT: only set if it actually changes (prevents loops)
   const setStagePosSmart = useCallback(
     (p: { x: number; y: number }) => {
       const next = constrainView ? clampStagePosToPlot(p) : p;
@@ -166,7 +183,7 @@ export default function CanvasStage(props: {
     [constrainView, clampStagePosToPlot, props.setStagePos, props.stagePos]
   );
 
-  // ✅ Clamp once when turning constrainView ON (no dependency on props.stagePos)
+  // Clamp once when turning constrainView ON
   const prevConstrainRef = useRef(constrainView);
   useEffect(() => {
     const prev = prevConstrainRef.current;
@@ -178,15 +195,16 @@ export default function CanvasStage(props: {
     }
   }, [constrainView, clampStagePosToPlot, props.setStagePos, props.stagePos]);
 
-  const itemsSorted = useMemo(
-    () => [...props.doc.items].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)),
-    [props.doc.items]
-  );
+  const itemsSorted = useMemo(() => {
+    const arr = props.doc.items.slice();
+    arr.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    return arr;
+  }, [props.doc.items]);
 
   const selectedItems = useMemo(() => {
-    const set = new Set(props.selectedIds);
-    return props.doc.items.filter((i) => set.has(i.id));
-  }, [props.doc.items, props.selectedIds]);
+    if (props.selectedIds.length === 0) return [];
+    return props.doc.items.filter((i) => selectedSet.has(i.id));
+  }, [props.doc.items, props.selectedIds.length, selectedSet]);
 
   const single = selectedItems.length === 1 ? selectedItems[0] : null;
   const anyLocked = selectedItems.some((it) => Boolean(it.meta?.locked));
@@ -205,6 +223,23 @@ export default function CanvasStage(props: {
     stagePos: props.stagePos,
     stageScale: props.stageScale,
   });
+
+  // ✅ Keep selection visuals in sync after programmatic moves (Align/Distribute/Order)
+  const selectedGeometryKey = useMemo(() => {
+    if (!props.selectedIds.length) return "";
+    const set = selectedSet;
+    return itemsSorted
+      .filter((it) => set.has(it.id))
+      .map((it) => `${it.id}:${it.x},${it.y},${it.w},${it.h},${it.r},${it.order ?? 0}`)
+      .join("|");
+  }, [itemsSorted, props.selectedIds.length, selectedSet]);
+
+  useEffect(() => {
+    if (!props.selectedIds.length) return;
+    selectionUI.updateSelectionUIRaf();
+    trRef.current?.getLayer()?.batchDraw();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedGeometryKey]);
 
   const cursorRef = useRef<string>("default");
   const setWrapCursor = useCallback((cursor: string) => {
@@ -248,14 +283,14 @@ export default function CanvasStage(props: {
   const zoom = useZoom({
     stageRef,
     stagePos: props.stagePos,
-    setStagePos: setStagePosSmart,
+    setStagePos: setStagePosSmart, // now clamps using live scale => no bounce
     stageScale: props.stageScale,
     setStageScale: props.setStageScale,
     updateSelectionUIRaf: selectionUI.updateSelectionUIRaf,
   });
 
-  useEffect(() => setEditMode("none"), [props.selectedIds.join("|")]);
-  useEffect(() => setToolbarOffset(null), [props.selectedIds.join("|")]);
+  useEffect(() => setEditMode("none"), [selectedIdsKey]);
+  useEffect(() => setToolbarOffset(null), [selectedIdsKey]);
 
   const clampItemsToPlot = useCallback(
     (nextW: number, nextH: number) => {
@@ -278,9 +313,7 @@ export default function CanvasStage(props: {
       props.onUpdateCanvas({ width: w, height: h });
       clampItemsToPlot(w, h);
 
-      // keep camera sane after plot changes (guarded)
       setStagePosSmart(props.stagePos);
-
       setDraftCanvas(null);
     },
     [clampItemsToPlot, props.onUpdateCanvas, props.stagePos, setStagePosSmart]
@@ -334,7 +367,13 @@ export default function CanvasStage(props: {
 
       if (kind === "rect") {
         props.onUpdateItem(single.id, {
-          meta: { ...single.meta, polygon: undefined, curvature: undefined, bezier: undefined, cornerRadii: undefined },
+          meta: {
+            ...single.meta,
+            polygon: undefined,
+            curvature: undefined,
+            bezier: undefined,
+            cornerRadii: undefined,
+          },
         });
         setEditMode("corners");
         selectionUI.updateSelectionUIRaf();
@@ -343,7 +382,13 @@ export default function CanvasStage(props: {
 
       if (kind === "polygon") {
         props.onUpdateItem(single.id, {
-          meta: { ...single.meta, polygon: single.meta.polygon, curvature: undefined, bezier: undefined, cornerRadii: undefined },
+          meta: {
+            ...single.meta,
+            polygon: single.meta.polygon,
+            curvature: undefined,
+            bezier: undefined,
+            cornerRadii: undefined,
+          },
         });
         setEditMode("polygon");
         selectionUI.updateSelectionUIRaf();
@@ -352,7 +397,13 @@ export default function CanvasStage(props: {
 
       if (kind === "curvature") {
         props.onUpdateItem(single.id, {
-          meta: { ...single.meta, curvature: single.meta.curvature, polygon: undefined, bezier: undefined, cornerRadii: undefined },
+          meta: {
+            ...single.meta,
+            curvature: single.meta.curvature,
+            polygon: undefined,
+            bezier: undefined,
+            cornerRadii: undefined,
+          },
         });
         setEditMode("curvature");
         selectionUI.updateSelectionUIRaf();
@@ -361,7 +412,13 @@ export default function CanvasStage(props: {
 
       if (kind === "bezier") {
         props.onUpdateItem(single.id, {
-          meta: { ...single.meta, bezier: single.meta.bezier, curvature: undefined, polygon: undefined, cornerRadii: undefined },
+          meta: {
+            ...single.meta,
+            bezier: single.meta.bezier,
+            curvature: undefined,
+            polygon: undefined,
+            cornerRadii: undefined,
+          },
         });
         setEditMode("bezier");
         selectionUI.updateSelectionUIRaf();
@@ -382,10 +439,14 @@ export default function CanvasStage(props: {
             : "Edit";
 
   const canRadius =
-    Boolean(single) && isRectLike(single!) && !hasBezier(single!) && !hasCurvature(single!) && !hasPolygon(single!);
+    Boolean(single) &&
+    isRectLike(single!) &&
+    !hasBezier(single!) &&
+    !hasCurvature(single!) &&
+    !hasPolygon(single!);
 
-  const canConvert = Boolean(single) && !anyLocked && !isSingleTree;
-  const canEdit = Boolean(single) && !anyLocked && !isSingleTree;
+  const canConvert = Boolean(single) && !anyLocked && !(single ? isTree(single) : false);
+  const canEdit = Boolean(single) && !anyLocked && !(single ? isTree(single) : false);
 
   const snapStep = props.snapStep ?? 20;
   const showSnapGuides = Boolean(props.snapToGrid) && Boolean(props.cursorWorld);
@@ -470,8 +531,14 @@ export default function CanvasStage(props: {
           }}
           onDblClick={pan.onDblClick}
         >
-          <Layer>
-            <StageBackground plotW={plotW} plotH={plotH} noiseImg={textures.noiseImg} noiseOffset={textures.noiseOffset} />
+          {/* Background layer doesn't need hit testing */}
+          <Layer listening={false}>
+            <StageBackground
+              plotW={plotW}
+              plotH={plotH}
+              noiseImg={textures.noiseImg}
+              noiseOffset={textures.noiseOffset}
+            />
 
             <PlotSurface
               plotW={plotW}
@@ -484,20 +551,36 @@ export default function CanvasStage(props: {
               soilImg={textures.soilImg}
             />
 
-            {props.showGrid !== false ? <Grid plotW={plotW} plotH={plotH} stageScale={props.stageScale} /> : null}
+            {props.showGrid !== false ? (
+              <Grid plotW={plotW} plotH={plotH} stageScale={props.stageScale} />
+            ) : null}
 
             {snapped ? (
               <>
-                <Line points={[snapped.x, 0, snapped.x, plotH]} stroke="rgba(111, 102, 255, 0.22)" strokeWidth={1} listening={false} />
-                <Line points={[0, snapped.y, plotW, snapped.y]} stroke="rgba(111, 102, 255, 0.22)" strokeWidth={1} listening={false} />
+                <Line
+                  points={[snapped.x, 0, snapped.x, plotH]}
+                  stroke="rgba(111, 102, 255, 0.22)"
+                  strokeWidth={1}
+                  listening={false}
+                />
+                <Line
+                  points={[0, snapped.y, plotW, snapped.y]}
+                  stroke="rgba(111, 102, 255, 0.22)"
+                  strokeWidth={1}
+                  listening={false}
+                />
               </>
             ) : null}
+          </Layer>
 
+          {/* Interactive layer */}
+          <Layer>
             {itemsSorted.map((item) => (
               <ItemNode
                 key={item.id}
                 item={item}
-                selected={props.selectedIds.includes(item.id)}
+                selected={selectedSet.has(item.id)}
+                selectedCount={props.selectedIds.length}
                 locked={Boolean(item.meta?.locked)}
                 stageScale={props.stageScale}
                 editMode={props.selectedIds.length === 1 ? editMode : "none"}
@@ -512,10 +595,10 @@ export default function CanvasStage(props: {
                 }}
                 onSelect={(evt: { shiftKey: boolean }) => {
                   if (!evt.shiftKey) return props.setSelectedIds([item.id]);
-                  const set = new Set(props.selectedIds);
-                  if (set.has(item.id)) set.delete(item.id);
-                  else set.add(item.id);
-                  props.setSelectedIds(Array.from(set));
+                  const next = new Set(props.selectedIds);
+                  if (next.has(item.id)) next.delete(item.id);
+                  else next.add(item.id);
+                  props.setSelectedIds(Array.from(next));
                 }}
                 onCommit={(patch: Partial<StudioItem>) => {
                   if (Boolean(item.meta?.locked)) return;

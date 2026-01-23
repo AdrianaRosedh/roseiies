@@ -53,6 +53,14 @@ export default function MobileShell(props: {
   onSendBackward: () => void;
   onBringToFront: () => void;
   onSendToBack: () => void;
+
+  // ✅ Optional: if you later add align/distribute to mobile ToolsSheet
+  canArrange?: boolean;
+  canDistribute?: boolean;
+  alignTo?: "selection" | "plot";
+  setAlignTo?: (v: "selection" | "plot") => void;
+  onAlign?: (k: "left" | "center" | "right" | "top" | "middle" | "bottom") => void;
+  onDistribute?: (axis: "x" | "y") => void;
 }) {
   return (
     <div className="md:hidden mt-3 rounded-2xl border border-black/10 bg-white/40 shadow-sm overflow-hidden relative h-[calc(100vh-56px-56px-28px)]">
@@ -89,6 +97,13 @@ export default function MobileShell(props: {
         onSendBackward={props.onSendBackward}
         onBringToFront={props.onBringToFront}
         onSendToBack={props.onSendToBack}
+        // ✅ Optional pass-through (ToolsSheet can ignore if not implemented)
+        canArrange={props.canArrange}
+        canDistribute={props.canDistribute}
+        alignTo={props.alignTo}
+        setAlignTo={props.setAlignTo}
+        onAlign={props.onAlign}
+        onDistribute={props.onDistribute}
       />
 
       <InspectorSheet
