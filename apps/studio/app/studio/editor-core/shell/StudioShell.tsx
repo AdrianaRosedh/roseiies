@@ -284,7 +284,7 @@ export default function StudioShell(props: {
     store.updateItemsBatch?.(patches);
   }
 
-  const canvasProps = {
+    const canvasProps = {
     module,
     doc,
     tool: store.tool,
@@ -304,6 +304,11 @@ export default function StudioShell(props: {
     onCopySelected: store.copySelected,
     onPasteAtCursor: store.pasteAtCursor,
     onDeleteSelected: store.deleteSelected,
+
+    // ✅ Undo / Redo for Cmd+Z (works if your store exposes either shape)
+    onUndo: store.undo,
+    onRedo: store.redo,
+
     showGrid,
 
     // ✅ NEW: lets CanvasStage refresh transformer/toolbar after batch ops

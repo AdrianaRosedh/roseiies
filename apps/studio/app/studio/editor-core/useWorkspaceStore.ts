@@ -78,6 +78,28 @@ function isEditableTarget(el: EventTarget | null) {
   return tag === "input" || tag === "textarea" || tag === "select" || el.isContentEditable;
 }
 
+/** -------------------------
+ *  ✅ History helpers
+ *  - Snapshot LayoutDoc per layoutId
+ *  - Cap history to avoid memory blowups
+ *  - Snapshot ONLY when doc changes (updateDoc / updateItemsBatch)
+ * -------------------------- */
+const MAX_HISTORY = 80;
+
+type HistoryStack = {
+  layoutId: string | null;
+  past: LayoutDoc[];
+  future: LayoutDoc[];
+};
+
+function cloneDoc(doc: LayoutDoc): LayoutDoc {
+  // structuredClone keeps types better; fallback to JSON.
+  // LayoutDoc is plain data so JSON is safe.
+  // @ts-ignore
+  if (typeof structuredClone === "function") return structuredClone(doc);
+  return JSON.parse(JSON.stringify(doc)) as LayoutDoc;
+}
+
 export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: string }) {
   const key = storageKey(opts?.tenantId);
 
@@ -115,11 +137,23 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
   // ✅ NEW: selectionVersion bumps when selected items are mutated (programmatic ops)
   const [selectionVersion, setSelectionVersion] = useState(0);
 
+  // ✅ history stacks
+  const historyRef = useRef<HistoryStack>({ layoutId: null, past: [], future: [] });
+
   const doc = useMemo(() => {
     const id = state.activeLayoutId;
     if (!id) return emptyDoc(module);
     return state.docs[id] ?? emptyDoc(module);
   }, [state, module]);
+
+  // When layout changes, reset history stacks for safety (you can persist per-layout later)
+  useEffect(() => {
+    const layoutId = state.activeLayoutId ?? null;
+    const h = historyRef.current;
+    if (h.layoutId !== layoutId) {
+      historyRef.current = { layoutId, past: [], future: [] };
+    }
+  }, [state.activeLayoutId]);
 
   const selected = useMemo(() => {
     if (selectedIds.length === 0) return null;
@@ -132,9 +166,89 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
     return doc.items.filter((i) => set.has(i.id));
   }, [doc.items, selectedIds]);
 
+  function pushHistorySnapshot(currentDoc: LayoutDoc) {
+    const layoutId = state.activeLayoutId;
+    if (!layoutId) return;
+
+    const h = historyRef.current;
+    if (h.layoutId !== layoutId) {
+      historyRef.current = { layoutId, past: [], future: [] };
+    }
+
+    h.past.push(cloneDoc(currentDoc));
+    if (h.past.length > MAX_HISTORY) h.past.splice(0, h.past.length - MAX_HISTORY);
+
+    // new change invalidates redo stack
+    h.future = [];
+  }
+
+  function undo() {
+    const layoutId = state.activeLayoutId;
+    if (!layoutId) return;
+
+    const h = historyRef.current;
+    if (h.layoutId !== layoutId) return;
+    if (h.past.length === 0) return;
+
+    const prevDoc = h.past.pop()!;
+    const currentDoc = state.docs[layoutId] ?? emptyDoc(module);
+
+    // push current into future
+    h.future.push(cloneDoc(currentDoc));
+    if (h.future.length > MAX_HISTORY) h.future.splice(0, h.future.length - MAX_HISTORY);
+
+    setState((prev) => ({
+      ...prev,
+      docs: {
+        ...prev.docs,
+        [layoutId]: prevDoc,
+      },
+      layouts: prev.layouts.map((l) =>
+        l.id === layoutId ? { ...l, updatedAt: new Date().toISOString() } : l
+      ),
+    }));
+
+    // clear selection (avoid selecting deleted items) + bump selectionVersion
+    setSelectedIds([]);
+    setSelectionVersion((v) => v + 1);
+  }
+
+  function redo() {
+    const layoutId = state.activeLayoutId;
+    if (!layoutId) return;
+
+    const h = historyRef.current;
+    if (h.layoutId !== layoutId) return;
+    if (h.future.length === 0) return;
+
+    const nextDoc = h.future.pop()!;
+    const currentDoc = state.docs[layoutId] ?? emptyDoc(module);
+
+    // push current into past
+    h.past.push(cloneDoc(currentDoc));
+    if (h.past.length > MAX_HISTORY) h.past.splice(0, h.past.length - MAX_HISTORY);
+
+    setState((prev) => ({
+      ...prev,
+      docs: {
+        ...prev.docs,
+        [layoutId]: nextDoc,
+      },
+      layouts: prev.layouts.map((l) =>
+        l.id === layoutId ? { ...l, updatedAt: new Date().toISOString() } : l
+      ),
+    }));
+
+    setSelectedIds([]);
+    setSelectionVersion((v) => v + 1);
+  }
+
   function updateDoc(patch: Partial<LayoutDoc>) {
     const layoutId = state.activeLayoutId;
     if (!layoutId) return;
+
+    // ✅ snapshot before change
+    pushHistorySnapshot(doc);
 
     setState((prev) => ({
       ...prev,
@@ -155,7 +269,7 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
   const updateLayoutDoc = updateDoc;
 
   /**
-   * ✅ NEW: batch update items in a single setState
+   * ✅ Batch update items in a single setState
    * - avoids N renders for Align/Distribute/Order
    * - merges meta/style shallowly
    */
@@ -163,6 +277,9 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
     const layoutId = state.activeLayoutId;
     if (!layoutId) return;
     if (!patches.length) return;
+
+    // ✅ snapshot before change
+    pushHistorySnapshot(doc);
 
     // bump selectionVersion if any patch touches a selected id
     const selectedSet = new Set(selectedIds);
@@ -479,6 +596,23 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
     function onKeyDown(e: KeyboardEvent) {
       if (isEditableTarget(e.target)) return;
 
+      if (e.defaultPrevented) return;
+
+      const isMod = e.metaKey || e.ctrlKey;
+
+      // ✅ UNDO / REDO
+      if (isMod && (e.key === "z" || e.key === "Z")) {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+        return;
+      }
+      if (isMod && (e.key === "y" || e.key === "Y")) {
+        e.preventDefault();
+        redo();
+        return;
+      }
+
       if (e.key === " ") {
         e.preventDefault();
         setPanMode(true);
@@ -495,8 +629,6 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
         if (selectedIds.length) deleteSelected();
         return;
       }
-
-      const isMod = e.metaKey || e.ctrlKey;
 
       if (isMod && (e.key === "c" || e.key === "C")) {
         e.preventDefault();
@@ -535,7 +667,7 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
       window.removeEventListener("blur", onBlur);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedIds, selectedItems, clipboard]);
+  }, [selectedIds, selectedItems, clipboard, state.activeLayoutId, doc]);
 
   return {
     mounted,
@@ -564,14 +696,14 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
     updateLayoutDoc,
 
     updateItem,
-    updateItemsBatch, // ✅ NEW
+    updateItemsBatch,
     updateMeta,
     updateStyle,
 
     treeVariant,
     setTreeVariant,
 
-    selectionVersion, // ✅ NEW
+    selectionVersion,
 
     setCursorWorld,
     setViewportCenterWorld,
@@ -595,5 +727,9 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
     copySelected,
     pasteAtCursor,
     deleteSelected,
+
+    // ✅ NEW: history API
+    undo,
+    redo,
   };
 }
