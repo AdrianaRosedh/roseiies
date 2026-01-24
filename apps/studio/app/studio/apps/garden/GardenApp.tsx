@@ -24,6 +24,15 @@ export default function GardenApp({
   view: GardenView;
   onViewChange: (v: GardenView) => void;
 }) {
+  // ✅ Guard portal early (prevents weird undefined tenant situations)
+  if (!portal?.tenantId) {
+    return (
+      <div className="p-6 text-sm text-black/60">
+        Missing portal.tenantId — GardenApp needs a tenant context.
+      </div>
+    );
+  }
+
   const store = useWorkspaceStore(GardenModule, { tenantId: portal.tenantId });
 
   const navItems: ShellNavItem[] = useMemo(
@@ -34,12 +43,41 @@ export default function GardenApp({
     []
   );
 
-  // Optional: show garden name in the dock hint area instead of taking canvas space
-  const activeGarden = useMemo(
-    () =>
-      store.state.gardens.find((g: any) => g.id === store.state.activeGardenId) ?? null,
-    [store.state]
-  );
+  // ✅ If store is not ready yet, don’t touch store.state
+  const activeGarden = useMemo(() => {
+    if (!store?.state) return null;
+    return store.state.gardens.find((g: any) => g.id === store.state.activeGardenId) ?? null;
+  }, [store?.state]);
+
+  // ✅ Render a light shell while store boots
+  if (!store?.state) {
+    return (
+      <AppShell
+        navItems={navItems}
+        activeKey={view}
+        onChange={(k) => onViewChange(k as GardenView)}
+        onGoWorkplace={onBack}
+        brandLabel="Roseiies"
+        brandMarkSrc="/brand/eiie.svg"
+        brandWordmarkSrc="/brand/roseiies.svg"
+        workspaceName="Olivea"
+        userName="Not signed in"
+        onOpenSettings={() => console.log("settings")}
+        bottomHint={
+          <>
+            <div className="font-medium text-black/55 truncate">Garden</div>
+            <div className="text-black/40">Loading…</div>
+          </>
+        }
+        watermarkText="Powered by Roseiies"
+        dockDefaultExpanded={false}
+      >
+        <div className="h-full w-full grid place-items-center text-sm text-black/50">
+          Loading workspace…
+        </div>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell
@@ -52,7 +90,7 @@ export default function GardenApp({
       brandWordmarkSrc="/brand/roseiies.svg"
       workspaceName="Olivea"
       userName="Not signed in"
-      onOpenSettings={() => console.log("settings")} 
+      onOpenSettings={() => console.log("settings")}
       bottomHint={
         <>
           <div className="font-medium text-black/55 truncate">
@@ -64,15 +102,12 @@ export default function GardenApp({
       watermarkText="Powered by Roseiies"
       dockDefaultExpanded={false}
     >
-      {/* IMPORTANT: no extra padding wrapper here */}
       <div className="h-full w-full overflow-hidden">
         {view === "sheets" ? (
-          // Sheets should scroll internally, not the whole app
           <div className="h-full overflow-auto p-4">
             <GardenSheets store={store} portal={portal} onGoDesign={() => onViewChange("designer")} />
           </div>
         ) : (
-          // StudioShell already manages full-height + internal overflow/scroll
           <StudioShell module={GardenModule} store={store} portal={portal} />
         )}
       </div>

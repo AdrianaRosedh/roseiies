@@ -1,8 +1,9 @@
+// apps/studio/app/studio/apps/garden/GardenSheets.tsx
 "use client";
 
-import { useMemo } from "react";
 import type { PortalContext } from "../../../lib/portal/getPortalContext";
 
+import GardenSheetsErrorBoundary from "./sheets/components/GardenSheetsErrorBoundary";
 import GardenSheetsToolbar from "./sheets/components/GardenSheetsToolbar";
 import GardenSheetsGrid from "./sheets/components/GardenSheetsGrid";
 
@@ -11,9 +12,51 @@ import { useGardenSheetColumns } from "./sheets/hooks/useGardenSheetColumns";
 import { usePlantings } from "./sheets/hooks/usePlantings";
 import { useGardenSheetsModel } from "./sheets/hooks/useGardenSheetsModel";
 
-import type { Column, PlantingRow } from "./sheets/types";
+import type { Column } from "./sheets/types";
+import { useMemo } from "react";
 
 export default function GardenSheets({
+  store,
+  portal,
+  onGoDesign,
+}: {
+  store: any;
+  portal: PortalContext;
+  onGoDesign?: () => void;
+}) {
+  // ✅ Hard guard: prevents the crash you’re seeing
+  if (!portal || !portal.tenantId) {
+    return (
+      <div className="p-6">
+        <div className="rounded-xl border border-black/10 bg-white/70 p-5">
+          <div className="text-sm font-semibold text-black/80">
+            Sheets can’t load (missing tenant context)
+          </div>
+          <div className="mt-2 text-sm text-black/60">
+            The Garden Sheets view requires <span className="font-medium">portal.tenantId</span>.
+            This usually means the Garden App isn’t passing <span className="font-medium">portal</span> into Sheets.
+          </div>
+          {onGoDesign ? (
+            <button
+              onClick={onGoDesign}
+              className="mt-4 rounded-lg border border-black/10 bg-white/60 px-3 py-2 text-sm hover:bg-white/80"
+            >
+              Back to Map
+            </button>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <GardenSheetsErrorBoundary>
+      <GardenSheetsInner store={store} portal={portal} onGoDesign={onGoDesign} />
+    </GardenSheetsErrorBoundary>
+  );
+}
+
+function GardenSheetsInner({
   store,
   portal,
   onGoDesign,
@@ -33,97 +76,87 @@ export default function GardenSheets({
     return store.state.docs[id] ?? null;
   }, [store.state]);
 
-  const beds = useMemo(() => {
-    const items = doc?.items ?? [];
-    return items.filter((it: any) => it.type === "bed");
-  }, [doc]);
+  const items = useMemo(() => doc?.items ?? [], [doc]);
+  const bedsAndTrees = useMemo(
+    () => items.filter((it: any) => it.type === "bed" || it.type === "tree"),
+    [items]
+  );
+  const bedsOnly = useMemo(() => items.filter((it: any) => it.type === "bed"), [items]);
 
-  const gardenName = activeGarden?.name ?? "";
+  const gardenName = activeGarden?.name ?? null;
 
-  function bedLabel(id: string | null) {
-    if (!id) return "";
-    const bed = beds.find((b: any) => b.id === id);
-    const code = bed?.meta?.code ? ` (${bed.meta.code})` : "";
-    return (bed?.label ?? id) + code;
-  }
+  const defaultCols: Column[] = useMemo(
+    () => [
+      { key: "crop", label: "Crop", type: "text", width: 260 },
+      {
+        key: "status",
+        label: "Status",
+        type: "select",
+        width: 180,
+        options: { values: ["Planned", "Planted", "Growing", "Harvest", "Archived"] },
+      },
+      { key: "bed_id", label: "Bed / Tree", type: "select", width: 240 },
+      { key: "zone_code", label: "Zone", type: "select", width: 160 },
+      { key: "planted_at", label: "Planted", type: "date", width: 160 },
+      { key: "pin_x", label: "Pin", type: "checkbox", width: 90 },
+    ],
+    []
+  );
 
-  function zonesForBed(bedId: string | null) {
-    if (!bedId) return [];
-    const bed = beds.find((b: any) => b.id === bedId);
-    const zones = bed?.meta?.zones;
-    if (!Array.isArray(zones)) return [];
-    return zones
-      .map((z: any) => String(z?.code ?? "").trim())
-      .filter(Boolean);
-  }
+  const { cols, addColumn } = useGardenSheetColumns({
+    tenantId: portal.tenantId,
+    defaultCols,
+  });
 
-  // columns + custom cells persistence
-  const { cols, setCols } = useGardenSheetColumns({ tenantId: portal.tenantId });
-  const { customCells, setCustomCells } = useGardenSheetCells({
+  const { cell } = useGardenSheetCells({
     tenantId: portal.tenantId,
     gardenName,
   });
 
-  // plantings data (source of truth)
-  const { rows, setRows, loading, refresh, createPlanting, patchPlanting } = usePlantings({
+  const plantings = usePlantings({
     gardenName,
     tenantId: portal.tenantId,
   });
 
-  // model (editing state machine + display/select helpers)
   const model = useGardenSheetsModel({
+    store,
+    gardenName,
+    rows: plantings.rows,
+    setRows: (fn) => plantings.setRows(fn),
     cols,
-    beds,
-    bedLabel,
-    zonesForBed,
-
-    rows,
-    setRows: (updater) => setRows(updater),
-
-    customCells,
-    setCustomCells: (updater) => setCustomCells(updater),
-
-    createPlanting: async (draft) => {
-      const res = await createPlanting(draft);
-      if (res.ok) return { ok: true as const, created: res.created };
-      return { ok: false as const, error: res.error };
-    },
-
-    patchPlanting: async (id, patch) => {
-      await patchPlanting(id, patch);
-    },
+    cell,
+    create: plantings.create,
+    patch: plantings.patch,
+    bedsAndTrees,
+    bedsOnly,
   });
-
-  const onAddColumn = () => {
-    const key = `field_${Math.random().toString(16).slice(2)}`;
-    const newCol: Column = { key, label: "New field", type: "text", width: 180 };
-    setCols((prev: Column[]) => [...prev, newCol]);
-  };
 
   return (
     <div className="w-full">
       <GardenSheetsToolbar
         gardenName={gardenName}
-        loading={loading}
-        onRefresh={refresh}
-        onAddColumn={onAddColumn}
+        loading={plantings.loading}
+        lastError={plantings.lastError}
+        onRefresh={plantings.refresh}
+        onAddColumn={addColumn}
         onGoDesign={onGoDesign}
       />
 
       <GardenSheetsGrid
         cols={cols}
-        setCols={setCols}
-        rows={rows as PlantingRow[]}
-        draftRow={model.draftRow}
+        rows={model.displayRows}
+        bedsAndTrees={bedsAndTrees}
+        zonesForBed={model.zonesForBed}
         editing={model.editing}
         draft={model.draft}
         setDraft={model.setDraft}
-        startEdit={model.startEdit}
-        stopEdit={model.stopEdit}
-        commitEdit={model.commitEdit}
         getCellValue={model.getCellValue}
-        renderCellDisplay={model.renderCellDisplay}
-        renderSelectEditor={model.renderSelectEditor}
+        startEdit={model.startEdit}
+        commitEdit={model.commitEdit}
+        stopEdit={model.stopEdit}
+        selectedRowId={model.selectedRowId}
+        onRowClick={model.onRowClick}
+        itemLabel={model.itemLabel}
       />
     </div>
   );
