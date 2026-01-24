@@ -47,9 +47,20 @@ export function usePlantings(args: { gardenName: string | null; tenantId: string
 
   const create = useCallback(
     async (draft: Omit<PlantingRow, "id">) => {
-      if (!gardenName) throw new Error("Missing gardenName");
+      if (!gardenName) {
+        const msg = "Missing gardenName";
+        setLastError(msg);
+        throw new Error(msg);
+      }
+
       const token = getStudioToken();
-      if (!token) throw new Error("Missing NEXT_PUBLIC_ROSEIIES_STUDIO_TOKEN");
+      if (!token) {
+        const msg = "Missing NEXT_PUBLIC_ROSEIIES_STUDIO_TOKEN";
+        setLastError(msg);
+        throw new Error(msg);
+      }
+
+      setLastError(null);
 
       const payload = { gardenName, ...draft };
 
@@ -66,22 +77,29 @@ export function usePlantings(args: { gardenName: string | null; tenantId: string
       const json = text ? JSON.parse(text) : null;
 
       if (!res.ok) {
-        throw new Error(typeof json?.error === "string" ? json.error : text || `HTTP ${res.status}`);
+        const msg = typeof json?.error === "string" ? json.error : text || `HTTP ${res.status}`;
+        setLastError(msg);
+        throw new Error(msg);
       }
 
-      const created = json as PlantingRow;
-      setRows((prev) => [created, ...prev]);
-      return created;
+      // ✅ Do not mutate rows here. Model handles optimistic + replacement.
+      return json as PlantingRow;
     },
     [gardenName]
   );
 
-  const patch = useCallback(async (id: string, patch: Partial<PlantingRow>) => {
+  const patch = useCallback(async (id: string, patchObj: Partial<PlantingRow>) => {
     const token = getStudioToken();
-    if (!token) throw new Error("Missing NEXT_PUBLIC_ROSEIIES_STUDIO_TOKEN");
+    if (!token) {
+      const msg = "Missing NEXT_PUBLIC_ROSEIIES_STUDIO_TOKEN";
+      setLastError(msg);
+      throw new Error(msg);
+    }
+
+    setLastError(null);
 
     // optimistic update
-    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patchObj } : r)));
 
     const res = await fetch(`/api/plantings?id=${encodeURIComponent(id)}`, {
       method: "PATCH",
@@ -89,12 +107,14 @@ export function usePlantings(args: { gardenName: string | null; tenantId: string
         "Content-Type": "application/json",
         "x-roseiies-studio-token": token,
       },
-      body: JSON.stringify(patch),
+      body: JSON.stringify(patchObj),
     });
 
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      console.error("PATCH /api/plantings failed:", res.status, text);
+      const msg = text || `PATCH /api/plantings failed (${res.status})`;
+      setLastError(msg);
+      console.error(msg);
     }
   }, []);
 

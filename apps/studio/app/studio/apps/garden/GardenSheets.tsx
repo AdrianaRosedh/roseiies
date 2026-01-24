@@ -24,7 +24,6 @@ export default function GardenSheets({
   portal: PortalContext;
   onGoDesign?: () => void;
 }) {
-  // ✅ Hard guard: prevents the crash you’re seeing
   if (!portal || !portal.tenantId) {
     return (
       <div className="p-6">
@@ -34,7 +33,6 @@ export default function GardenSheets({
           </div>
           <div className="mt-2 text-sm text-black/60">
             The Garden Sheets view requires <span className="font-medium">portal.tenantId</span>.
-            This usually means the Garden App isn’t passing <span className="font-medium">portal</span> into Sheets.
           </div>
           {onGoDesign ? (
             <button
@@ -147,6 +145,7 @@ function GardenSheetsInner({
         rows={model.displayRows}
         bedsAndTrees={bedsAndTrees}
         zonesForBed={model.zonesForBed}
+        getActiveBedIdForRow={model.getActiveBedIdForRow} // ✅ required
         editing={model.editing}
         draft={model.draft}
         setDraft={model.setDraft}

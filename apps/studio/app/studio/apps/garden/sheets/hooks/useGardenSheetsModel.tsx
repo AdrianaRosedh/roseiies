@@ -1,4 +1,4 @@
-// apps/studio/app/studio/apps/garden/sheets/hooks/useGardenSheetsModel.ts
+// apps/studio/app/studio/apps/garden/sheets/hooks/useGardenSheetsModel.tsx
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -30,11 +30,16 @@ export function useGardenSheetsModel(args: {
   const [draftRow, setDraftRow] = useState<Omit<PlantingRow, "id">>(emptyDraftRow());
   const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
 
+  // --- Keep refs in sync so commitEdit always reads latest values ---
+  const draftRowRef = useRef<Omit<PlantingRow, "id">>(draftRow);
+  useEffect(() => {
+    draftRowRef.current = draftRow;
+  }, [draftRow]);
+
   const latestRef = useRef({
     editing: null as { rowId: string; colKey: string } | null,
     draft: "" as any,
   });
-
   useEffect(() => {
     latestRef.current = { editing, draft };
   }, [editing, draft]);
@@ -68,25 +73,24 @@ export function useGardenSheetsModel(args: {
     [bedsOnly]
   );
 
-  // ✅ used by Grid: zone options need bedId even for __new__
   const getActiveBedIdForRow = useCallback(
     (rowId: string, row: PlantingRow | null) => {
-      if (rowId === "__new__") return draftRow.bed_id ?? null;
+      if (rowId === "__new__") return draftRowRef.current.bed_id ?? null;
       return row?.bed_id ?? null;
     },
-    [draftRow.bed_id]
+    []
   );
 
   const getCellValue = useCallback(
     (rowId: string, colKey: string, row: PlantingRow | null) => {
       if (rowId === "__new__") {
-        if (isCoreKey(colKey)) return (draftRow as any)[colKey];
+        if (isCoreKey(colKey)) return (draftRowRef.current as any)[colKey];
         return cell.get("__new__", colKey);
       }
       if (row && isCoreKey(colKey)) return (row as any)[colKey];
       return cell.get(rowId, colKey);
     },
-    [cell, draftRow]
+    [cell]
   );
 
   const startEdit = useCallback(
@@ -127,21 +131,25 @@ export function useGardenSheetsModel(args: {
       const col = cols.find((c) => String(c.key) === colKey);
       if (!col) return;
 
-      // --------------------------
-      // NEW ROW creation (__new__)
-      // --------------------------
+      // ---- NEW ROW (__new__) ----
       if (rowId === "__new__") {
-        // apply edit into draftRow or custom cells
+        const coerced = coerceByType(col, snap.draft);
+
+        // Update in-memory draft row for core keys, otherwise in custom cell store
         if (isCoreKey(colKey)) {
-          setDraftRow((prev) => ({ ...prev, [colKey]: coerceByType(col, snap.draft) } as any));
+          const next = { ...draftRowRef.current, [colKey]: coerced } as any;
+          draftRowRef.current = next;
+          setDraftRow(next);
         } else {
-          cell.set("__new__", colKey, coerceByType(col, snap.draft));
+          cell.set("__new__", colKey, coerced);
         }
 
+        // Build nextDraft from the *ref* to avoid stale state
         const nextDraft: Omit<PlantingRow, "id"> = {
-          ...draftRow,
-          ...(isCoreKey(colKey) ? ({ [colKey]: coerceByType(col, snap.draft) } as any) : {}),
+          ...draftRowRef.current,
         };
+
+        // If the cell we edited was core, it's already in the ref above.
 
         const hasAny =
           Boolean(nextDraft.crop && String(nextDraft.crop).trim()) ||
@@ -151,26 +159,36 @@ export function useGardenSheetsModel(args: {
           Boolean(nextDraft.status && String(nextDraft.status).trim());
 
         stopEdit();
-
         if (!hasAny) return;
 
-        const tempId = `tmp_${Math.random().toString(16).slice(2)}_${Date.now()}`;
-        setRows((prev) => [{ id: tempId, ...nextDraft }, ...prev]);
+        // ✅ Do NOT force focus changes here (prevents "can't type/click" lockups)
+        // Only attempt create if bed_id exists; otherwise keep draft and wait.
+        const bedId = (nextDraft.bed_id ?? "").trim();
+        if (!bedId) {
+          // keep draft row as-is; user can continue typing / select bed later
+          setDraftRow(nextDraft);
+          return;
+        }
 
-        // ✅ capture all custom fields from __new__
+        const tempId = `tmp_${Math.random().toString(16).slice(2)}_${Date.now()}`;
+
+        // Insert optimistic at bottom (no jump)
+        setRows((prev) => [...prev, ({ id: tempId, ...nextDraft } as any)]);
+
         const customFromNew = cell.getRow("__new__");
 
-        // clear new draft immediately (UI feels “snappy”)
-        setDraftRow(emptyDraftRow());
+        // clear new draft immediately
+        draftRowRef.current = emptyDraftRow();
+        setDraftRow(draftRowRef.current);
         cell.delRow("__new__");
 
         try {
           const created = await create(nextDraft);
 
-          // replace optimistic row with real row
+          // replace optimistic
           setRows((prev) => prev.map((r) => (r.id === tempId ? created : r)));
 
-          // ✅ move custom fields to created row
+          // move custom fields
           if (customFromNew && Object.keys(customFromNew).length) {
             cell.setRow(created.id, customFromNew);
           }
@@ -183,8 +201,10 @@ export function useGardenSheetsModel(args: {
           // rollback optimistic
           setRows((prev) => prev.filter((r) => r.id !== tempId));
 
-          // restore draft
+          // restore draft + custom
+          draftRowRef.current = nextDraft;
           setDraftRow(nextDraft);
+
           if (customFromNew && Object.keys(customFromNew).length) {
             cell.setRow("__new__", customFromNew);
           }
@@ -192,11 +212,12 @@ export function useGardenSheetsModel(args: {
         return;
       }
 
-      // --------------------------
-      // EXISTING ROW commit
-      // --------------------------
+      // ---- EXISTING ROW commit ----
       const row = rows.find((r) => r.id === rowId) ?? null;
-      if (!row) return;
+      if (!row) {
+        stopEdit();
+        return;
+      }
 
       if (isCoreKey(colKey)) {
         const patchObj: any = {};
@@ -207,13 +228,10 @@ export function useGardenSheetsModel(args: {
         else if (colKey === "crop" || colKey === "status") patchObj[colKey] = snap.draft === "" ? null : String(snap.draft);
         else if (colKey === "pin_x" || colKey === "pin_y") patchObj[colKey] = snap.draft === "" ? null : Number(snap.draft);
 
-        // ✅ if bed changes, invalidate zone if it doesn't exist on new bed
         if (colKey === "bed_id") {
           const nextBedId = patchObj.bed_id as string | null;
           const allowedZones = zonesForBed(nextBedId);
-          if (row.zone_code && !allowedZones.includes(row.zone_code)) {
-            patchObj.zone_code = null;
-          }
+          if (row.zone_code && !allowedZones.includes(row.zone_code)) patchObj.zone_code = null;
         }
 
         stopEdit();
@@ -223,12 +241,11 @@ export function useGardenSheetsModel(args: {
         focusMapForRow(merged);
         setSelectedRowId(rowId);
       } else {
-        // custom field
         cell.set(rowId, colKey, coerceByType(col, snap.draft));
         stopEdit();
       }
 
-      // keyboard move
+      // Keyboard move
       if (opts?.move) {
         const colIndex = cols.findIndex((c) => String(c.key) === colKey);
         const rowIndex = rows.findIndex((r) => r.id === rowId);
@@ -248,24 +265,10 @@ export function useGardenSheetsModel(args: {
         startEdit(nextRowId, nextColKey, initial ?? "");
       }
     },
-    [
-      cols,
-      rows,
-      setRows,
-      draftRow,
-      cell,
-      create,
-      patch,
-      stopEdit,
-      startEdit,
-      getCellValue,
-      zonesForBed,
-      focusMapForRow,
-      setSelectedRowId,
-    ]
+    [cols, rows, setRows, cell, create, patch, stopEdit, startEdit, getCellValue, zonesForBed, focusMapForRow]
   );
 
-  // ✅ Critical: auto-commit active edit on leave
+  // Auto-commit active edit on page hide/unload
   useEffect(() => {
     const onVis = () => {
       if (document.visibilityState === "hidden") void commitEdit();
@@ -304,7 +307,7 @@ export function useGardenSheetsModel(args: {
     displayRows,
     itemLabel,
     zonesForBed,
-    getActiveBedIdForRow, // ✅ expose for Grid so Zone select works on __new__
+    getActiveBedIdForRow,
     getCellValue,
     startEdit,
     stopEdit,

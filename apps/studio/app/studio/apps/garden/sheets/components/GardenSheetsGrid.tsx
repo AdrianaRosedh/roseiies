@@ -11,7 +11,6 @@ export default function GardenSheetsGrid(props: {
   bedsAndTrees: any[];
   zonesForBed: (bedId: string | null) => string[];
 
-  // ✅ NEW: needed so zone dropdown works for "__new__"
   getActiveBedIdForRow: (rowId: string, row: PlantingRow | null) => string | null;
 
   editing: { rowId: string; colKey: string } | null;
@@ -55,13 +54,12 @@ export default function GardenSheetsGrid(props: {
     const key = String(col.key);
 
     if (key === "bed_id") {
-      const raw = rowId === "__new__" ? (getCellValue("__new__", "bed_id", null) ?? null) : row?.bed_id ?? null;
+      const raw =
+        rowId === "__new__"
+          ? (getCellValue("__new__", "bed_id", null) ?? null)
+          : row?.bed_id ?? null;
       const txt = raw ? itemLabel(raw) : "";
-      return txt ? (
-        <span className="text-black/80 truncate">{txt}</span>
-      ) : (
-        <span className="text-black/30">—</span>
-      );
+      return txt ? <span className="text-black/80 truncate">{txt}</span> : <span className="text-black/30">—</span>;
     }
 
     if (key === "pin_x") {
@@ -74,11 +72,7 @@ export default function GardenSheetsGrid(props: {
     const v = getCellValue(rowId, key, row);
 
     if (col.type === "checkbox") {
-      return (
-        <span className="text-black/70">
-          {v ? "✓" : <span className="text-black/30">—</span>}
-        </span>
-      );
+      return <span className="text-black/70">{v ? "✓" : <span className="text-black/30">—</span>}</span>;
     }
 
     if (col.type === "select" && typeof v === "string" && v.trim()) {
@@ -92,14 +86,13 @@ export default function GardenSheetsGrid(props: {
   function renderEditor(rowId: string, col: Column, row: PlantingRow | null) {
     const key = String(col.key);
 
-    // Bed/Tree select
     if (col.type === "select" && key === "bed_id") {
       return (
         <select
           autoFocus
           value={String(draft ?? "")}
           onChange={(e) => setDraft(e.target.value)}
-          onBlur={() => commitEdit()}
+          onBlur={() => commitEdit()} // safe for selects
           className="w-full rounded-md border border-black/10 bg-white px-2 py-1 text-sm"
         >
           <option value="">—</option>
@@ -113,7 +106,6 @@ export default function GardenSheetsGrid(props: {
       );
     }
 
-    // ✅ Zone select depends on bed_id (works for __new__ now)
     if (col.type === "select" && key === "zone_code") {
       const bedId = getActiveBedIdForRow(rowId, row);
       const zones = zonesForBed(bedId);
@@ -123,7 +115,7 @@ export default function GardenSheetsGrid(props: {
           autoFocus
           value={String(draft ?? "")}
           onChange={(e) => setDraft(e.target.value)}
-          onBlur={() => commitEdit()}
+          onBlur={() => commitEdit()} // safe for selects
           className="w-full rounded-md border border-black/10 bg-white px-2 py-1 text-sm"
         >
           <option value="">—</option>
@@ -136,7 +128,6 @@ export default function GardenSheetsGrid(props: {
       );
     }
 
-    // generic select
     if (col.type === "select") {
       const options = col.options?.values ?? [];
       return (
@@ -184,6 +175,7 @@ export default function GardenSheetsGrid(props: {
       );
     }
 
+    // TEXT / NUMBER (NO blur commit)
     const inputType = col.type === "number" ? "number" : "text";
     return (
       <input
@@ -191,15 +183,14 @@ export default function GardenSheetsGrid(props: {
         type={inputType}
         value={draft == null ? "" : String(draft)}
         onChange={(e) => setDraft(e.target.value)}
-        onBlur={() => commitEdit()}
         onKeyDown={(e) => {
           if (e.key === "Enter") {
             e.preventDefault();
-            commitEdit({ move: "down" });
+            void commitEdit({ move: "down" });
           }
           if (e.key === "Tab") {
             e.preventDefault();
-            commitEdit({ move: e.shiftKey ? "left" : "right" });
+            void commitEdit({ move: e.shiftKey ? "left" : "right" });
           }
           if (e.key === "Escape") {
             e.preventDefault();
@@ -231,10 +222,6 @@ export default function GardenSheetsGrid(props: {
                     autoFocus
                     value={renameDraft}
                     onChange={(e) => setRenameDraft(e.target.value)}
-                    onBlur={() => {
-                      setRenaming(null);
-                      setRenameDraft("");
-                    }}
                     className="w-full rounded-md border border-black/10 bg-white px-2 py-1 text-xs font-semibold text-black/80"
                   />
                 ) : (
@@ -266,7 +253,6 @@ export default function GardenSheetsGrid(props: {
                 {cols.map((c, i) => {
                   const key = String(c.key);
                   const isEditing = editing?.rowId === id && editing?.colKey === key;
-
                   const initial = getCellValue(id, key, row);
 
                   return (
@@ -274,23 +260,26 @@ export default function GardenSheetsGrid(props: {
                       key={`${id}_${key}`}
                       className="px-3 py-2 text-sm border-r border-black/5 last:border-r-0 cursor-text"
                       style={{ width: widths[i] }}
-                      onClick={(e) => {
+                      onMouseDownCapture={(e) => {
                         e.stopPropagation();
+
+                        // ✅ IMPORTANT: if switching, commit first and THEN start new edit
+                        if (editing && !(editing.rowId === id && editing.colKey === key)) {
+                          void commitEdit().finally(() => {
+                            startEdit(id, key, initial ?? "");
+                          });
+                          return;
+                        }
+
                         startEdit(id, key, initial ?? "");
                       }}
                     >
-                      {isEditing ? (
-                        renderEditor(id, c, row)
-                      ) : (
-                        <div className="truncate">{renderDisplay(id, c, row)}</div>
-                      )}
+                      {isEditing ? renderEditor(id, c, row) : <div className="truncate">{renderDisplay(id, c, row)}</div>}
                     </div>
                   );
                 })}
 
-                {isDraft ? (
-                  <div className="px-3 py-2 text-xs text-black/35">New record</div>
-                ) : null}
+                {isDraft ? <div className="px-3 py-2 text-xs text-black/35">New record</div> : null}
               </div>
             );
           })}
@@ -298,7 +287,7 @@ export default function GardenSheetsGrid(props: {
       </div>
 
       <div className="mt-2 text-xs text-black/45">
-        Tip: click to edit. Enter saves + moves down. Tab saves + moves across. Leaving the page auto-saves the active cell.
+        Tip: click to edit. Enter saves + moves down. Tab saves + moves across.
       </div>
     </div>
   );
