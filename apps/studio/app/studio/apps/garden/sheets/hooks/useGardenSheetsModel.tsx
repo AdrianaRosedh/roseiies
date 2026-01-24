@@ -1,9 +1,26 @@
 // apps/studio/app/studio/apps/garden/sheets/hooks/useGardenSheetsModel.tsx
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { Column, PlantingRow } from "../types";
 import { coerceByType, emptyDraftRow, isCoreKey } from "../types";
+
+function normalizeValue(v: any) {
+  if (v == null) return "";
+  if (v === "null") return "";
+  return v;
+}
+
+function normalizeStringOrNull(v: any): string | null {
+  const n = normalizeValue(v);
+  const s = String(n ?? "").trim();
+  return s.length ? s : null;
+}
+
+function isValidBedOrTreeId(bedsAndTrees: any[], id: any): id is string {
+  if (!id || typeof id !== "string") return false;
+  return bedsAndTrees.some((it) => it?.id === id);
+}
 
 export function useGardenSheetsModel(args: {
   store: any;
@@ -25,24 +42,8 @@ export function useGardenSheetsModel(args: {
 }) {
   const { store, rows, setRows, cols, cell, create, patch, bedsAndTrees, bedsOnly } = args;
 
-  const [editing, setEditing] = useState<{ rowId: string; colKey: string } | null>(null);
-  const [draft, setDraft] = useState<any>("");
   const [draftRow, setDraftRow] = useState<Omit<PlantingRow, "id">>(emptyDraftRow());
   const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
-
-  // --- Keep refs in sync so commitEdit always reads latest values ---
-  const draftRowRef = useRef<Omit<PlantingRow, "id">>(draftRow);
-  useEffect(() => {
-    draftRowRef.current = draftRow;
-  }, [draftRow]);
-
-  const latestRef = useRef({
-    editing: null as { rowId: string; colKey: string } | null,
-    draft: "" as any,
-  });
-  useEffect(() => {
-    latestRef.current = { editing, draft };
-  }, [editing, draft]);
 
   const displayRows = useMemo(() => {
     const out = rows.map((r) => ({ id: r.id, row: r, isDraft: false }));
@@ -75,43 +76,30 @@ export function useGardenSheetsModel(args: {
 
   const getActiveBedIdForRow = useCallback(
     (rowId: string, row: PlantingRow | null) => {
-      if (rowId === "__new__") return draftRowRef.current.bed_id ?? null;
+      if (rowId === "__new__") return draftRow.bed_id ?? null;
       return row?.bed_id ?? null;
     },
-    []
+    [draftRow.bed_id]
   );
 
   const getCellValue = useCallback(
     (rowId: string, colKey: string, row: PlantingRow | null) => {
       if (rowId === "__new__") {
-        if (isCoreKey(colKey)) return (draftRowRef.current as any)[colKey];
+        if (isCoreKey(colKey)) return (draftRow as any)[colKey];
         return cell.get("__new__", colKey);
       }
       if (row && isCoreKey(colKey)) return (row as any)[colKey];
       return cell.get(rowId, colKey);
     },
-    [cell]
+    [cell, draftRow]
   );
 
-  const startEdit = useCallback(
-    (rowId: string, colKey: string, initial: any) => {
-      setEditing({ rowId, colKey });
-      const col = cols.find((c) => String(c.key) === colKey);
-      if (col?.type === "checkbox") setDraft(Boolean(initial));
-      else setDraft(initial == null ? "" : initial);
-    },
-    [cols]
-  );
-
-  const stopEdit = useCallback(() => {
-    setEditing(null);
-    setDraft("");
-  }, []);
-
+  // ✅ Prevent “blank map”: never focus/center an invalid id
   const focusMapForRow = useCallback(
     (row: PlantingRow) => {
       const id = row.bed_id;
-      if (!id) return;
+      if (!isValidBedOrTreeId(bedsAndTrees, id)) return;
+
       try {
         store?.setSelectedIds?.([id]);
       } catch {}
@@ -119,76 +107,71 @@ export function useGardenSheetsModel(args: {
         store?.centerOnItem?.(id);
       } catch {}
     },
-    [store]
+    [store, bedsAndTrees]
   );
 
-  const commitEdit = useCallback(
-    async (opts?: { move?: "down" | "right" | "left" }) => {
-      const snap = latestRef.current;
-      if (!snap.editing) return;
+  const getRowById = useCallback(
+    (rowId: string) => {
+      if (rowId === "__new__") return null;
+      return rows.find((r) => r.id === rowId) ?? null;
+    },
+    [rows]
+  );
 
-      const { rowId, colKey } = snap.editing;
+  const commitCell = useCallback(
+    async (args: { rowId: string; colKey: string; value: any; move?: "down" | "right" | "left" }) => {
+      const { rowId, colKey, value } = args;
       const col = cols.find((c) => String(c.key) === colKey);
       if (!col) return;
 
-      // ---- NEW ROW (__new__) ----
+      // --------------------------
+      // NEW ROW (__new__)
+      // --------------------------
       if (rowId === "__new__") {
-        const coerced = coerceByType(col, snap.draft);
+        const raw = coerceByType(col, value);
+        const coerced = normalizeValue(raw);
 
-        // Update in-memory draft row for core keys, otherwise in custom cell store
         if (isCoreKey(colKey)) {
-          const next = { ...draftRowRef.current, [colKey]: coerced } as any;
-          draftRowRef.current = next;
-          setDraftRow(next);
+          setDraftRow((prev) => ({ ...prev, [colKey]: coerced } as any));
         } else {
           cell.set("__new__", colKey, coerced);
         }
 
-        // Build nextDraft from the *ref* to avoid stale state
         const nextDraft: Omit<PlantingRow, "id"> = {
-          ...draftRowRef.current,
+          ...draftRow,
+          ...(isCoreKey(colKey) ? ({ [colKey]: coerced } as any) : {}),
         };
 
-        // If the cell we edited was core, it's already in the ref above.
+        // ✅ enforce required fields BEFORE create
+        const cropValue = normalizeStringOrNull(nextDraft.crop);
+        const bedValue = normalizeStringOrNull(nextDraft.bed_id);
 
-        const hasAny =
-          Boolean(nextDraft.crop && String(nextDraft.crop).trim()) ||
-          Boolean(nextDraft.bed_id && String(nextDraft.bed_id).trim()) ||
-          Boolean(nextDraft.zone_code && String(nextDraft.zone_code).trim()) ||
-          Boolean(nextDraft.planted_at && String(nextDraft.planted_at).trim()) ||
-          Boolean(nextDraft.status && String(nextDraft.status).trim());
+        if (!cropValue) return;
+        if (!bedValue || !isValidBedOrTreeId(bedsAndTrees, bedValue)) return;
 
-        stopEdit();
-        if (!hasAny) return;
+        nextDraft.crop = cropValue;
+        nextDraft.bed_id = bedValue;
 
-        // ✅ Do NOT force focus changes here (prevents "can't type/click" lockups)
-        // Only attempt create if bed_id exists; otherwise keep draft and wait.
-        const bedId = (nextDraft.bed_id ?? "").trim();
-        if (!bedId) {
-          // keep draft row as-is; user can continue typing / select bed later
-          setDraftRow(nextDraft);
-          return;
+        // ✅ validate zone if present
+        if (nextDraft.zone_code) {
+          const z = normalizeStringOrNull(nextDraft.zone_code);
+          const allowed = zonesForBed(bedValue);
+          nextDraft.zone_code = z && allowed.includes(z) ? z : null;
         }
 
         const tempId = `tmp_${Math.random().toString(16).slice(2)}_${Date.now()}`;
-
-        // Insert optimistic at bottom (no jump)
-        setRows((prev) => [...prev, ({ id: tempId, ...nextDraft } as any)]);
+        setRows((prev) => [{ id: tempId, ...nextDraft }, ...prev]);
 
         const customFromNew = cell.getRow("__new__");
 
-        // clear new draft immediately
-        draftRowRef.current = emptyDraftRow();
-        setDraftRow(draftRowRef.current);
+        // clear draft immediately
+        setDraftRow(emptyDraftRow());
         cell.delRow("__new__");
 
         try {
           const created = await create(nextDraft);
-
-          // replace optimistic
           setRows((prev) => prev.map((r) => (r.id === tempId ? created : r)));
 
-          // move custom fields
           if (customFromNew && Object.keys(customFromNew).length) {
             cell.setRow(created.id, customFromNew);
           }
@@ -197,14 +180,10 @@ export function useGardenSheetsModel(args: {
           setSelectedRowId(created.id);
         } catch (e) {
           console.error("Create planting failed:", e);
-
-          // rollback optimistic
           setRows((prev) => prev.filter((r) => r.id !== tempId));
 
-          // restore draft + custom
-          draftRowRef.current = nextDraft;
+          // restore draft
           setDraftRow(nextDraft);
-
           if (customFromNew && Object.keys(customFromNew).length) {
             cell.setRow("__new__", customFromNew);
           }
@@ -212,80 +191,65 @@ export function useGardenSheetsModel(args: {
         return;
       }
 
-      // ---- EXISTING ROW commit ----
+      // --------------------------
+      // EXISTING ROW
+      // --------------------------
       const row = rows.find((r) => r.id === rowId) ?? null;
-      if (!row) {
-        stopEdit();
-        return;
-      }
+      if (!row) return;
 
       if (isCoreKey(colKey)) {
         const patchObj: any = {};
+        const raw = coerceByType(col, value);
+        const coerced = normalizeValue(raw);
 
-        if (colKey === "bed_id") patchObj.bed_id = snap.draft === "" ? null : String(snap.draft);
-        else if (colKey === "zone_code") patchObj.zone_code = snap.draft === "" ? null : String(snap.draft);
-        else if (colKey === "planted_at") patchObj.planted_at = snap.draft === "" ? null : String(snap.draft);
-        else if (colKey === "crop" || colKey === "status") patchObj[colKey] = snap.draft === "" ? null : String(snap.draft);
-        else if (colKey === "pin_x" || colKey === "pin_y") patchObj[colKey] = snap.draft === "" ? null : Number(snap.draft);
+        if (colKey === "crop") patchObj.crop = normalizeStringOrNull(coerced);
+
+        if (colKey === "status") patchObj.status = normalizeStringOrNull(coerced);
+
+        if (colKey === "planted_at") patchObj.planted_at = normalizeStringOrNull(coerced);
 
         if (colKey === "bed_id") {
-          const nextBedId = patchObj.bed_id as string | null;
-          const allowedZones = zonesForBed(nextBedId);
-          if (row.zone_code && !allowedZones.includes(row.zone_code)) patchObj.zone_code = null;
+          const next = normalizeStringOrNull(coerced);
+          patchObj.bed_id = next && isValidBedOrTreeId(bedsAndTrees, next) ? next : null;
+
+          // if bed changes, zone must still be valid
+          const allowed = zonesForBed(patchObj.bed_id ?? null);
+          if (row.zone_code && !allowed.includes(row.zone_code)) {
+            patchObj.zone_code = null;
+          }
         }
 
-        stopEdit();
-        await patch(rowId, patchObj);
+        if (colKey === "zone_code") {
+          const z = normalizeStringOrNull(coerced);
+          const bedId = row.bed_id && isValidBedOrTreeId(bedsAndTrees, row.bed_id) ? row.bed_id : null;
+          const allowed = zonesForBed(bedId);
+          patchObj.zone_code = z && allowed.includes(z) ? z : null;
+        }
+
+        if (colKey === "pin_x" || colKey === "pin_y") {
+          patchObj[colKey] = coerced === "" ? null : Number(coerced);
+        }
+
+        try {
+          await patch(rowId, patchObj);
+        } catch (e) {
+          console.error("Patch failed:", e);
+        }
 
         const merged = { ...row, ...patchObj } as PlantingRow;
+
+        // ✅ only focus map when valid
         focusMapForRow(merged);
         setSelectedRowId(rowId);
       } else {
-        cell.set(rowId, colKey, coerceByType(col, snap.draft));
-        stopEdit();
-      }
-
-      // Keyboard move
-      if (opts?.move) {
-        const colIndex = cols.findIndex((c) => String(c.key) === colKey);
-        const rowIndex = rows.findIndex((r) => r.id === rowId);
-
-        const next =
-          opts.move === "right"
-            ? { r: rowIndex, c: Math.min(cols.length - 1, colIndex + 1) }
-            : opts.move === "left"
-              ? { r: rowIndex, c: Math.max(0, colIndex - 1) }
-              : { r: Math.min(rows.length, rowIndex + 1), c: colIndex };
-
-        const nextRowId = next.r >= rows.length ? "__new__" : rows[next.r].id;
-        const nextColKey = String(cols[next.c].key);
-        const nextRow = nextRowId === "__new__" ? null : rows[next.r];
-
-        const initial = getCellValue(nextRowId, nextColKey, nextRow);
-        startEdit(nextRowId, nextColKey, initial ?? "");
+        // custom field: local only
+        const raw = coerceByType(col, value);
+        const coerced = normalizeValue(raw);
+        cell.set(rowId, colKey, coerced);
       }
     },
-    [cols, rows, setRows, cell, create, patch, stopEdit, startEdit, getCellValue, zonesForBed, focusMapForRow]
+    [cols, rows, setRows, draftRow, cell, create, patch, zonesForBed, focusMapForRow, bedsAndTrees]
   );
-
-  // Auto-commit active edit on page hide/unload
-  useEffect(() => {
-    const onVis = () => {
-      if (document.visibilityState === "hidden") void commitEdit();
-    };
-    const onBeforeUnload = () => {
-      void commitEdit();
-    };
-
-    document.addEventListener("visibilitychange", onVis);
-    window.addEventListener("beforeunload", onBeforeUnload);
-
-    return () => {
-      void commitEdit();
-      document.removeEventListener("visibilitychange", onVis);
-      window.removeEventListener("beforeunload", onBeforeUnload);
-    };
-  }, [commitEdit]);
 
   const onRowClick = useCallback(
     (row: PlantingRow | null) => {
@@ -297,21 +261,15 @@ export function useGardenSheetsModel(args: {
   );
 
   return {
-    editing,
-    draft,
-    setDraft,
-    draftRow,
-    setDraftRow,
+    displayRows,
     selectedRowId,
     setSelectedRowId,
-    displayRows,
     itemLabel,
     zonesForBed,
     getActiveBedIdForRow,
     getCellValue,
-    startEdit,
-    stopEdit,
-    commitEdit,
+    commitCell,
     onRowClick,
+    getRowById,
   };
 }

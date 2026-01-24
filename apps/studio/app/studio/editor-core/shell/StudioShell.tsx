@@ -8,7 +8,6 @@ import type { PortalContext } from "../../../lib/portal/getPortalContext";
 // ✅ Realtime client (Option A)
 import { createBrowserSupabase } from "@roseiies/supabase/browser";
 
-
 import TopBar from "../TopBar";
 import LeftToolbar from "../LeftToolbar";
 import Inspector from "../Inspector";
@@ -35,11 +34,40 @@ type PlantingRow = {
 };
 
 function boundsOf(items: StudioItem[]) {
+  if (!items.length) return { minX: 0, minY: 0, maxX: 0, maxY: 0, w: 0, h: 0 };
   const minX = Math.min(...items.map((i) => i.x));
   const minY = Math.min(...items.map((i) => i.y));
   const maxX = Math.max(...items.map((i) => i.x + i.w));
   const maxY = Math.max(...items.map((i) => i.y + i.h));
   return { minX, minY, maxX, maxY, w: maxX - minX, h: maxY - minY };
+}
+
+function sanitizePlantingsForDoc(doc: LayoutDoc, plantings: PlantingRow[]) {
+  const items = doc?.items ?? [];
+  const beds = items.filter((it: any) => it.type === "bed");
+  const validItemIds = new Set(items.map((it: any) => it.id));
+
+  const zonesForBed = (bedId: string) => {
+    const bed = beds.find((b: any) => b.id === bedId);
+    const zones = bed?.meta?.zones;
+    if (!Array.isArray(zones)) return [];
+    return zones.map((z: any) => String(z?.code ?? "").trim()).filter(Boolean);
+  };
+
+  return (plantings ?? [])
+    .filter((p) => p && p.bed_id && validItemIds.has(p.bed_id))
+    .map((p) => {
+      const bedId = p.bed_id as string;
+      const allowed = zonesForBed(bedId);
+
+      const z = p.zone_code ? String(p.zone_code).trim() : null;
+      const zone_code = z && allowed.includes(z) ? z : null;
+
+      return {
+        ...p,
+        zone_code,
+      };
+    });
 }
 
 export default function StudioShell(props: {
@@ -69,6 +97,14 @@ export default function StudioShell(props: {
       body.style.height = prevBodyHeight;
     };
   }, []);
+
+  // ✅ Safety: clear selection when layout changes (prevents stale ids crashing selection UI)
+  useEffect(() => {
+    try {
+      store?.setSelectedIds?.([]);
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store?.state?.activeLayoutId]);
 
   // tool placement state
   const [treePlacing, setTreePlacing] = useState(false);
@@ -336,17 +372,20 @@ export default function StudioShell(props: {
       }
 
       if (!res.ok) return;
-      setPlantings(Array.isArray(json) ? (json as PlantingRow[]) : []);
+
+      const raw = Array.isArray(json) ? (json as PlantingRow[]) : [];
+      // ✅ sanitize to prevent Konva crashes from invalid bed_id/zone_code
+      setPlantings(sanitizePlantingsForDoc(doc, raw));
     } catch {
       // ignore in designer
     }
   }
 
-  // initial fetch / garden switch
+  // initial fetch / garden switch / doc changes
   useEffect(() => {
     refreshPlantings(activeGarden?.name ?? null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeGarden?.name, portal.tenantId]);
+  }, [activeGarden?.name, portal.tenantId, store.state.activeLayoutId]);
 
   // realtime subscription (tenant-scoped)
   useEffect(() => {
@@ -371,13 +410,11 @@ export default function StudioShell(props: {
           schema: "public",
           table: "garden_plantings",
           filter: `tenant_id=eq.${portal.tenantId}`,
-          
         },
         (payload) => {
           console.log("[realtime] garden_plantings change", payload);
           scheduleRefresh();
         }
-        
       )
       .subscribe();
 
@@ -386,7 +423,7 @@ export default function StudioShell(props: {
       supabase.removeChannel(channel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [portal.tenantId, activeGarden?.name]);
+  }, [portal.tenantId, activeGarden?.name, store.state.activeLayoutId]);
 
   // CanvasStage props
   const canvasProps = {
@@ -425,7 +462,7 @@ export default function StudioShell(props: {
     treePlacing,
     setTreePlacing,
 
-    // ✅ read-only plantings feed for pins
+    // ✅ read-only plantings feed for pins (sanitized!)
     plantings,
   };
 
@@ -533,7 +570,7 @@ export default function StudioShell(props: {
                       onUpdateItem={store.updateItem}
                       onUpdateMeta={store.updateMeta}
                       onUpdateStyle={store.updateStyle}
-                      plantings={plantings}   
+                      plantings={plantings}
                     />
                   </div>
                 </div>

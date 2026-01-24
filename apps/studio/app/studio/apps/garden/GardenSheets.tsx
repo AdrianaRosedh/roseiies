@@ -28,9 +28,7 @@ export default function GardenSheets({
     return (
       <div className="p-6">
         <div className="rounded-xl border border-black/10 bg-white/70 p-5">
-          <div className="text-sm font-semibold text-black/80">
-            Sheets can’t load (missing tenant context)
-          </div>
+          <div className="text-sm font-semibold text-black/80">Sheets can’t load (missing tenant context)</div>
           <div className="mt-2 text-sm text-black/60">
             The Garden Sheets view requires <span className="font-medium">portal.tenantId</span>.
           </div>
@@ -75,10 +73,7 @@ function GardenSheetsInner({
   }, [store.state]);
 
   const items = useMemo(() => doc?.items ?? [], [doc]);
-  const bedsAndTrees = useMemo(
-    () => items.filter((it: any) => it.type === "bed" || it.type === "tree"),
-    [items]
-  );
+  const bedsAndTrees = useMemo(() => items.filter((it: any) => it.type === "bed" || it.type === "tree"), [items]);
   const bedsOnly = useMemo(() => items.filter((it: any) => it.type === "bed"), [items]);
 
   const gardenName = activeGarden?.name ?? null;
@@ -86,13 +81,7 @@ function GardenSheetsInner({
   const defaultCols: Column[] = useMemo(
     () => [
       { key: "crop", label: "Crop", type: "text", width: 260 },
-      {
-        key: "status",
-        label: "Status",
-        type: "select",
-        width: 180,
-        options: { values: ["Planned", "Planted", "Growing", "Harvest", "Archived"] },
-      },
+      { key: "status", label: "Status", type: "select", width: 180, options: { values: ["Planned", "Planted", "Growing", "Harvest", "Archived"] } },
       { key: "bed_id", label: "Bed / Tree", type: "select", width: 240 },
       { key: "zone_code", label: "Zone", type: "select", width: 160 },
       { key: "planted_at", label: "Planted", type: "date", width: 160 },
@@ -145,21 +134,14 @@ function GardenSheetsInner({
         rows={model.displayRows}
         bedsAndTrees={bedsAndTrees}
         zonesForBed={model.zonesForBed}
-
-        // ✅ ADD THIS LINE
         getActiveBedIdForRow={model.getActiveBedIdForRow}
-
-        editing={model.editing}
-        draft={model.draft}
-        setDraft={model.setDraft}
-        getCellValue={model.getCellValue}
-        startEdit={model.startEdit}
-        commitEdit={model.commitEdit}
-        stopEdit={model.stopEdit}
         selectedRowId={model.selectedRowId}
         onRowClick={model.onRowClick}
         itemLabel={model.itemLabel}
-      /> 
+        getCellValue={model.getCellValue}
+        commitCell={model.commitCell}
+        getRowById={model.getRowById}
+      />
     </div>
   );
 }

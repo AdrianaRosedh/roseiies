@@ -1,6 +1,7 @@
+// apps/studio/app/studio/apps/garden/GardenApp.tsx
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 
 import GardenModule from "../../modules/garden/module";
 import { useWorkspaceStore } from "../../editor-core/workspace/useWorkspaceStore";
@@ -48,6 +49,25 @@ export default function GardenApp({
     if (!store?.state) return null;
     return store.state.gardens.find((g: any) => g.id === store.state.activeGardenId) ?? null;
   }, [store?.state]);
+
+  // ✅ HARD RESET invalid selection when layout changes
+  // This prevents blank canvas from stale/invalid selectedIds during view switches.
+  useEffect(() => {
+    if (!store?.state?.activeLayoutId) return;
+    try {
+      store.setSelectedIds([]);
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store?.state?.activeLayoutId]);
+
+  // ✅ Also clear selection when entering the designer view
+  // (extra safety: ensures Sheets interactions never poison the canvas)
+  useEffect(() => {
+    if (view !== "designer") return;
+    try {
+      store?.setSelectedIds?.([]);
+    } catch {}
+  }, [view, store]);
 
   // ✅ Render a light shell while store boots
   if (!store?.state) {

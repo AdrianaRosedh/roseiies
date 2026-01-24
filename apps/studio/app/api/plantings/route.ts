@@ -1,5 +1,4 @@
 // apps/studio/app/api/plantings/route.ts
-
 import { createServerSupabase } from "@roseiies/supabase/server";
 import { resolveTenantFromReq, requireStudioToken } from "../../lib/server/tenant-auth";
 
@@ -50,7 +49,6 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url);
   const gardenName = url.searchParams.get("gardenName");
-
   if (!gardenName) return Response.json({ error: "Missing gardenName" }, { status: 400 });
 
   const { gardenId } = await resolveGardenId({ supabase, tenantId, gardenName });
@@ -89,30 +87,31 @@ export async function POST(req: Request) {
   const gardenName = (body?.gardenName as string | undefined)?.trim();
   if (!gardenName) return Response.json({ error: "Missing gardenName" }, { status: 400 });
 
+  const crop = (body?.crop as string | null | undefined);
+  if (!crop || String(crop).trim() === "") {
+    return Response.json({ error: "Crop is required" }, { status: 400 });
+  }
+
+  const bed_id = (body?.bed_id as string | null | undefined);
+  if (!bed_id || String(bed_id).trim() === "") {
+    return Response.json({ error: "Bed/Tree is required" }, { status: 400 });
+  }
+
   const { gardenId, error: gerr } = await ensureGardenId({ supabase, tenantId, gardenName });
   if (!gardenId) return Response.json({ error: gerr ?? "Garden not found" }, { status: 400 });
 
-  const { bed_id, zone_code, crop, planted_at, pin_x, pin_y, status } = body ?? {};
-
-  // ✅ REQUIRED: bed_id must be present
-  const bedId = typeof bed_id === "string" ? bed_id.trim() : "";
-  if (!bedId) {
-    return Response.json(
-      { error: "Select a Bed/Tree before creating a planting (bed_id is required)." },
-      { status: 400 }
-    );
-  }
+  const { zone_code, planted_at, pin_x, pin_y, status } = body ?? {};
 
   const { data, error } = await supabase
     .from("garden_plantings")
     .insert({
       tenant_id: tenantId,
       garden_id: gardenId,
-      bed_id: bedId, // ✅ never null
-      zone_code: typeof zone_code === "string" && zone_code.trim() ? zone_code.trim() : null,
-      crop: typeof crop === "string" && crop.trim() ? crop.trim() : null,
-      status: typeof status === "string" && status.trim() ? status.trim() : null,
-      planted_at: typeof planted_at === "string" && planted_at.trim() ? planted_at.trim() : null,
+      bed_id,
+      zone_code: zone_code ?? null,
+      crop: String(crop).trim(),
+      status: status ?? null,
+      planted_at: planted_at ?? null,
       pin_x: pin_x ?? null,
       pin_y: pin_y ?? null,
     })
@@ -152,11 +151,14 @@ export async function PATCH(req: Request) {
     if (k in body) patch[k] = body[k];
   }
 
-  // optional: normalize bed_id on patch
-  if ("bed_id" in patch) {
-    const v = typeof patch.bed_id === "string" ? patch.bed_id.trim() : "";
-    if (!v) return Response.json({ error: "bed_id is required (cannot be empty)." }, { status: 400 });
-    patch.bed_id = v;
+  // safety: normalize empty strings to null
+  for (const k of ["crop", "status", "planted_at", "bed_id", "zone_code"]) {
+    if (k in patch) {
+      const v = patch[k];
+      if (v === "" || v === "null") patch[k] = null;
+      if (typeof patch[k] === "string") patch[k] = patch[k].trim();
+      if (patch[k] === "") patch[k] = null;
+    }
   }
 
   const { data, error } = await supabase

@@ -32,6 +32,7 @@ export function usePlantings(args: { gardenName: string | null; tenantId: string
         setRows([]);
         return;
       }
+
       setRows(Array.isArray(json) ? (json as PlantingRow[]) : []);
     } catch (e: any) {
       setLastError(e?.message ?? "Failed to load plantings");
@@ -45,24 +46,21 @@ export function usePlantings(args: { gardenName: string | null; tenantId: string
     refresh();
   }, [refresh]);
 
+  /**
+   * IMPORTANT:
+   * create() is now PURE:
+   * - returns created row
+   * - does NOT modify rows state
+   * The caller (Sheets model) owns optimistic insertion + replacement.
+   */
   const create = useCallback(
     async (draft: Omit<PlantingRow, "id">) => {
-      if (!gardenName) {
-        setLastError("Missing gardenName");
-        // fallback local create
-        const local: PlantingRow = { id: `local_${Date.now()}`, ...draft } as any;
-        setRows((prev) => [local, ...prev]);
-        return local;
-      }
+      if (!gardenName) throw new Error("Missing gardenName");
 
       const token = getStudioToken();
-
-      // ✅ Local-only mode if token missing
       if (!token) {
-        setLastError("Studio token missing — saved locally (not synced)");
-        const local: PlantingRow = { id: `local_${Date.now()}`, ...draft } as any;
-        setRows((prev) => [local, ...prev]);
-        return local;
+        // Let caller handle local fallback if desired
+        throw new Error("Missing NEXT_PUBLIC_ROSEIIES_STUDIO_TOKEN");
       }
 
       const payload = { gardenName, ...draft };
@@ -82,26 +80,24 @@ export function usePlantings(args: { gardenName: string | null; tenantId: string
       if (!res.ok) {
         const msg = typeof json?.error === "string" ? json.error : text || `HTTP ${res.status}`;
         setLastError(msg);
-        // fallback local create so user can keep working
-        const local: PlantingRow = { id: `local_${Date.now()}`, ...draft } as any;
-        setRows((prev) => [local, ...prev]);
-        return local;
+        throw new Error(msg);
       }
 
-      const created = json as PlantingRow;
-      setRows((prev) => [created, ...prev]);
-      return created;
+      setLastError(null);
+      return json as PlantingRow;
     },
     [gardenName]
   );
 
+  /**
+   * patch() can stay optimistic here (fine).
+   * But it MUST NOT throw, or it can kill editing UX.
+   */
   const patch = useCallback(async (id: string, patchObj: Partial<PlantingRow>) => {
     // optimistic update always
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patchObj } : r)));
 
     const token = getStudioToken();
-
-    // ✅ Local-only mode if token missing
     if (!token) {
       setLastError("Studio token missing — changes saved locally (not synced)");
       return;
@@ -120,6 +116,8 @@ export function usePlantings(args: { gardenName: string | null; tenantId: string
       const text = await res.text().catch(() => "");
       console.error("PATCH /api/plantings failed:", res.status, text);
       setLastError(text || `PATCH failed (HTTP ${res.status})`);
+    } else {
+      setLastError(null);
     }
   }, []);
 

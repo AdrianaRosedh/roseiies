@@ -56,7 +56,16 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
   const selectedItems = useMemo(() => getSelectedItems(doc, selectedIds), [doc, selectedIds]);
 
   function setSelectedIds(next: string[]) {
-    setUI((prev) => ({ ...prev, selectedIds: next }));
+    // ✅ critical safety: never keep ids that aren't in the current doc
+    const valid = new Set((doc.items ?? []).map((i) => i.id));
+    const cleaned = (next ?? []).filter((id) => valid.has(id));
+
+    setUI((prev) => ({
+      ...prev,
+      selectedIds: cleaned,
+      // if we dropped invalid ids, bump version so konva transformer/selection UI refreshes safely
+      selectionVersion: cleaned.length === (next ?? []).length ? prev.selectionVersion : prev.selectionVersion + 1,
+    }));
   }
 
   // history (undo/redo)
@@ -182,7 +191,7 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
       if ((el as any).isContentEditable) return true;
       return false;
     }
-    
+
     function onKeyDown(e: KeyboardEvent) {
       if (isEditableTarget(e.target)) return;
       if (e.defaultPrevented) return;
@@ -211,7 +220,8 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
 
       // escape clears selection + pan
       if (e.key === "Escape") {
-        setUI((prev) => ({ ...prev, panMode: false, selectedIds: [] }));
+        setUI((prev) => ({ ...prev, panMode: false }));
+        setSelectedIds([]); // ✅ always go through sanitizer + version bump
         return;
       }
 
