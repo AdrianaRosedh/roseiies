@@ -533,10 +533,7 @@ export default function StudioShell(props: {
                       onUpdateItem={store.updateItem}
                       onUpdateMeta={store.updateMeta}
                       onUpdateStyle={store.updateStyle}
-                      // ✅ Plants are read-only in Designer (Sheets is source of truth)
-                      onAddPlant={() => {}}
-                      onUpdatePlant={() => {}}
-                      onRemovePlant={() => {}}
+                      plantings={plantings}   
                     />
                   </div>
                 </div>

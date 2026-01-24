@@ -1,3 +1,4 @@
+// apps/studio/app/studio/editor-core/shell/DockLeft.tsx
 "use client";
 
 import React, { useMemo } from "react";
@@ -21,9 +22,9 @@ export default function DockLeft(props: {
   onOpenSettings?: () => void;
 
   // branding
-  brandMarkSrc?: string;      // collapsed only
-  brandWordmarkSrc?: string;  // expanded only
-  brandLabel?: string;        // fallback if wordmark missing
+  brandMarkSrc?: string; // collapsed only
+  brandWordmarkSrc?: string; // expanded only
+  brandLabel?: string; // fallback if wordmark missing
 
   // footer
   workspaceName?: string;
@@ -35,23 +36,36 @@ export default function DockLeft(props: {
 }) {
   const items = useMemo(() => props.navItems ?? [], [props.navItems]);
 
-  function onDockMouseDown(e: React.MouseEvent) {
-  const el = e.target as HTMLElement | null;
-  if (!el) return;
+  /**
+   * Rule:
+   * - Buttons/logo ALWAYS act first (never toggle dock).
+   * - Clicking empty dock background toggles:
+   *    collapsed -> expand
+   *    expanded  -> collapse
+   */
+  function onDockPointerDownCapture(e: React.PointerEvent) {
+    const target = e.target as HTMLElement | null;
+    if (!target) return;
 
-  // Clicking any interactive element should NOT toggle dock state.
-  // We mark these with data-dock-interactive="true".
-  if (el.closest?.("[data-dock-interactive='true']")) return;
+    // Any interactive element should NEVER toggle the dock.
+    const interactive = target.closest?.(
+      [
+        "[data-dock-interactive='true']",
+        "button",
+        "a",
+        "input",
+        "select",
+        "textarea",
+        "[role='button']",
+        "[role='link']",
+      ].join(",")
+    );
 
-  // Collapsed: click anywhere opens
-  if (!props.expanded) {
-    props.setExpanded(true);
-    return;
+    if (interactive) return;
+
+    // Empty-area click toggles.
+    props.setExpanded(!props.expanded);
   }
-
-  // Expanded: click on empty dock area closes
-  props.setExpanded(false);
-}
 
   return (
     <aside
@@ -61,13 +75,13 @@ export default function DockLeft(props: {
         "transition-[width] duration-200 ease-out",
         props.expanded ? "w-60" : "w-18",
       ].join(" ")}
-      onMouseDown={onDockMouseDown}
+      onPointerDownCapture={onDockPointerDownCapture}
     >
-      {/* Header */}
+      {/* Header / Logo */}
       <div className="px-3 py-3 border-b border-black/10">
         <button
           type="button"
-          data-expand-exempt="true"
+          data-dock-interactive="true"
           onClick={props.onGoWorkplace}
           className={[
             "w-full rounded-2xl hover:bg-black/5",
@@ -76,10 +90,10 @@ export default function DockLeft(props: {
           ].join(" ")}
           title="Back to Workplace"
         >
-          {/* Collapsed: mark only */}
           {!props.expanded ? (
             <div className="h-10 w-10 flex items-center justify-center overflow-hidden">
               {props.brandMarkSrc ? (
+                // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={props.brandMarkSrc}
                   alt="Roseiies"
@@ -92,7 +106,6 @@ export default function DockLeft(props: {
             </div>
           ) : null}
 
-          {/* Expanded: wordmark only */}
           {props.expanded ? (
             <div className="min-w-0 flex items-center">
               {props.brandWordmarkSrc ? (
@@ -113,16 +126,18 @@ export default function DockLeft(props: {
         </button>
       </div>
 
-      {/* Nav */}
+      {/* Nav buttons */}
       <div className="p-2 space-y-1 flex-1">
         {items.map((it) => {
           const active = props.activeKey === it.key;
+
           return (
             <button
               key={it.key}
               type="button"
+              data-dock-interactive="true"
               onClick={() => {
-                if (!props.expanded) props.setExpanded(true);
+                // ✅ navigation only — NEVER auto expand/collapse
                 props.onChange(it.key);
               }}
               className={[
@@ -156,9 +171,8 @@ export default function DockLeft(props: {
           </div>
         ) : null}
 
-        {/* Footer actions (no heavy container) */}
         <div className="space-y-1">
-          {/* Workplace (home) */}
+          {/* Workplace */}
           <button
             type="button"
             data-dock-interactive="true"
@@ -171,6 +185,7 @@ export default function DockLeft(props: {
           >
             <div className="h-9 w-9 rounded-2xl bg-black/5 flex items-center justify-center overflow-hidden">
               {props.workspaceLogoSrc ? (
+                // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={props.workspaceLogoSrc}
                   alt={props.workspaceName ?? "Workplace"}
@@ -181,7 +196,7 @@ export default function DockLeft(props: {
                 <span className="text-[16px] text-black/60">⌂</span>
               )}
             </div>
-            
+
             {props.expanded ? (
               <div className="min-w-0 text-left">
                 <div className="text-xs font-semibold text-black/75 truncate">
@@ -193,8 +208,8 @@ export default function DockLeft(props: {
               </div>
             ) : null}
           </button>
-          
-          {/* Settings / user */}
+
+          {/* Settings / User */}
           <button
             type="button"
             data-dock-interactive="true"
@@ -207,6 +222,7 @@ export default function DockLeft(props: {
           >
             <div className="h-9 w-9 rounded-2xl bg-black/5 flex items-center justify-center overflow-hidden">
               {props.userAvatarSrc ? (
+                // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={props.userAvatarSrc}
                   alt={props.userName ?? "User"}
@@ -217,7 +233,7 @@ export default function DockLeft(props: {
                 <span className="text-[16px] text-black/60">⚙︎</span>
               )}
             </div>
-            
+
             {props.expanded ? (
               <div className="min-w-0 text-left">
                 <div className="text-xs font-semibold text-black/75 truncate">
@@ -230,7 +246,7 @@ export default function DockLeft(props: {
             ) : null}
           </button>
         </div>
-      </div>     
+      </div>
     </aside>
   );
 }
