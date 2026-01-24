@@ -153,10 +153,8 @@ function Switch(props: { checked: boolean; onChange: (v: boolean) => void }) {
 }
 
 /* ---------------------------------------------
-  Compact section (no chunky cards)
-  - Minimal padding
-  - Soft divider (Apple-ish)
-  - Optional collapse (defaults chosen to avoid overflow => no scrolling needed)
+  Compact section
+  ✅ FIXED: no nested <button> issues
 --------------------------------------------- */
 function Section(props: {
   title: string;
@@ -168,19 +166,35 @@ function Section(props: {
 
   return (
     <div className="rounded-xl border border-black/10 bg-white/70">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="w-full px-3 py-2 flex items-center justify-between gap-2"
-      >
-        <div className="text-[12px] font-semibold text-black/80">{props.title}</div>
-        <div className="flex items-center gap-2">
-          {props.right}
+      {/* Header row */}
+      <div className="w-full px-3 py-2 flex items-center gap-2">
+        {/* Toggle button (ONLY this is a button) */}
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex-1 flex items-center justify-between gap-2 text-left"
+        >
+          <div className="text-[12px] font-semibold text-black/80">{props.title}</div>
           <span className={`text-black/35 transition-transform ${open ? "rotate-90" : ""}`}>›</span>
-        </div>
-      </button>
+        </button>
 
-      <div className={`grid transition-[grid-template-rows] duration-200 ${open ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
+        {/* Right actions are siblings (can be buttons safely) */}
+        {props.right ? (
+          <div
+            className="flex items-center gap-2 shrink-0"
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            {props.right}
+          </div>
+        ) : null}
+      </div>
+
+      <div
+        className={`grid transition-[grid-template-rows] duration-200 ${
+          open ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+        }`}
+      >
         <div className="overflow-hidden">
           <div className="border-t border-black/10 px-3 py-2">{props.children}</div>
         </div>
@@ -207,13 +221,8 @@ export default function Inspector(props: {
 }) {
   const isMulti = props.selectedIds.length > 1;
 
-  // ✅ no panel scrolling: the panel itself is "fit"
-  // We keep content compact + default-close sections to avoid overflow.
-  // If you add more fields later, you can selectively open/close or re-enable scroll.
-  const PANEL_CLASS =
-    "h-full border-l border-black/10 bg-white/60 flex flex-col overflow-hidden";
+  const PANEL_CLASS = "h-full border-l border-black/10 bg-white/60 flex flex-col overflow-hidden";
 
-  // Empty selection
   if (props.selectedIds.length === 0) {
     return (
       <aside className={PANEL_CLASS}>
@@ -226,7 +235,6 @@ export default function Inspector(props: {
     );
   }
 
-  // Multi selection
   if (isMulti) {
     return (
       <aside className={PANEL_CLASS}>
@@ -253,7 +261,6 @@ export default function Inspector(props: {
     );
   }
 
-  // ✅ capture for closures (avoid TS complaining)
   const selId = sel.id;
 
   const isBed = sel.type === "bed";
@@ -293,16 +300,15 @@ export default function Inspector(props: {
     sel.label?.trim()
       ? sel.label.trim()
       : isBed
-      ? "Untitled bed"
-      : isTree
-      ? "Untitled tree"
-      : "Untitled";
+        ? "Untitled bed"
+        : isTree
+          ? "Untitled tree"
+          : "Untitled";
 
   const guestVisible = !!sel.meta?.public;
 
   return (
     <aside className={PANEL_CLASS}>
-      {/* Header (compact, no extra fuss) */}
       <div className="px-4 py-3 border-b border-black/10">
         <div className="text-[13px] font-semibold text-black/85">Details</div>
 
@@ -315,17 +321,12 @@ export default function Inspector(props: {
             </div>
           </div>
 
-          {/* Guest visibility quick toggle */}
           <div className="flex items-center gap-2 shrink-0">
             <span className="text-[11px] text-black/45">Guest</span>
-            <Switch
-              checked={guestVisible}
-              onChange={(v) => props.onUpdateMeta(selId, { public: v })}
-            />
+            <Switch checked={guestVisible} onChange={(v) => props.onUpdateMeta(selId, { public: v })} />
           </div>
         </div>
 
-        {/* Name inline (compact row) */}
         <div className="mt-2 flex items-center gap-2">
           <span className="text-[11px] text-black/45 w-10">Name</span>
           <input
@@ -337,9 +338,7 @@ export default function Inspector(props: {
         </div>
       </div>
 
-      {/* Content (no scrolling) */}
       <div className="p-3 space-y-2">
-        {/* Zones FIRST (and open by default) */}
         {isBed ? (
           <Section
             title="Zones"
@@ -421,7 +420,6 @@ export default function Inspector(props: {
           </Section>
         ) : null}
 
-        {/* Plantings LAST (closed by default to avoid overflow / scroll) */}
         {(isBed || isTree) ? (
           <Section
             title="Plantings"

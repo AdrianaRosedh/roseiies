@@ -98,7 +98,7 @@ export function usePan(args: {
 
       const empty = isEmptyHit(e);
 
-      // place mode only on empty (and not while panning)
+      // Place tool only on empty (and not while panning)
       if (args.placeMode && empty && !args.panMode) {
         e.cancelBubble = true;
 
@@ -113,12 +113,9 @@ export function usePan(args: {
         return;
       }
 
-      // ✅ CRITICAL FIX:
-      // If panMode is ON and user clicked an ITEM, do NOT start panning.
-      // Let the item receive click/selection/transform normally.
+      // ✅ CRITICAL: if panMode is ON and click is on an item, do not pan.
       if (args.panMode && !empty) return;
 
-      // Pan on empty canvas (always allowed)
       if (empty || args.panMode) {
         emptyDownRef.current = { x: pointer.x, y: pointer.y };
         didPanRef.current = false;
@@ -167,7 +164,7 @@ export function usePan(args: {
   }, [args]);
 
   const onStagePointerUp = useCallback(() => {
-    // Only clear selection on an empty click when NOT in panMode
+    // Only clear selection on empty click when NOT in panMode
     if (emptyDownRef.current && !didPanRef.current && !args.panMode) {
       args.setSelectedIds([]);
       args.setToolbarBox(null);

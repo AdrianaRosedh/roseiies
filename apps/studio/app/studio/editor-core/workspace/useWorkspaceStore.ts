@@ -1,7 +1,7 @@
 // apps/studio/app/studio/editor-core/workspace/useWorkspaceStore.ts
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   ItemType,
   LayoutDoc,
@@ -12,7 +12,6 @@ import type {
 
 import { storageKey } from "./utils/storage";
 import { emptyDoc } from "./utils/doc";
-import { isEditableTarget } from "./utils/dom";
 
 import { getActiveDoc, getSelectedItem, getSelectedItems } from "./selectors";
 
@@ -25,6 +24,14 @@ import type { WorkspaceUIState } from "./types";
 
 export const TREE_VARIANTS = ["tree-01", "tree-02", "tree-03", "tree-04", "citrus"] as const;
 export type TreeVariant = (typeof TREE_VARIANTS)[number];
+
+function sameIdList(a: string[], b: string[]) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
 
 export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: string }) {
   const key = storageKey(opts?.tenantId);
@@ -55,17 +62,33 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
   const selected = useMemo(() => getSelectedItem(doc, selectedIds), [doc, selectedIds]);
   const selectedItems = useMemo(() => getSelectedItems(doc, selectedIds), [doc, selectedIds]);
 
-  function setSelectedIds(next: string[]) {
-    // ✅ critical safety: never keep ids that aren't in the current doc
-    const valid = new Set((doc.items ?? []).map((i) => i.id));
-    const cleaned = (next ?? []).filter((id) => valid.has(id));
+  // ✅ make valid-id set stable for this doc instance
+  const validIdSet = useMemo(() => {
+    return new Set((doc.items ?? []).map((i) => i.id));
+  }, [doc]);
 
-    setUI((prev) => ({
-      ...prev,
-      selectedIds: cleaned,
-      // if we dropped invalid ids, bump version so konva transformer/selection UI refreshes safely
-      selectionVersion: cleaned.length === (next ?? []).length ? prev.selectionVersion : prev.selectionVersion + 1,
-    }));
+  function sameList(a: string[], b: string[]) {
+    if (a === b) return true;
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+  }
+
+  function setSelectedIds(next: string[]) {
+    const valid = new Set((doc.items ?? []).map((i) => i.id));
+    const incoming = Array.isArray(next) ? next : [];
+    const cleaned = incoming.filter((id) => valid.has(id));
+
+    setUI((prev) => {
+      if (sameList(prev.selectedIds, cleaned)) return prev;
+
+      const dropped = cleaned.length !== incoming.length;
+      return {
+        ...prev,
+        selectedIds: cleaned,
+        selectionVersion: dropped ? prev.selectionVersion + 1 : prev.selectionVersion,
+      };
+    });
   }
 
   // history (undo/redo)
@@ -104,10 +127,8 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
     }));
   }
 
-  // alias expected by some parts of the UI
   const updateLayoutDoc = updateDoc;
 
-  // item patch primitive (batch)
   function updateItemsBatch(patches: Array<{ id: string; patch: Partial<StudioItem> }>) {
     const layoutId = state.activeLayoutId;
     if (!layoutId) return;
@@ -158,7 +179,6 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
     updateItemsBatch([{ id, patch: { style: patch as any } as any }]);
   }
 
-  // commands (layout/garden + adding items etc)
   const commands = useWorkspaceCommands({
     module,
     state,
@@ -171,7 +191,6 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
     setSelectedIds,
   });
 
-  // clipboard (copy/paste + cursor/viewport refs)
   const clip = useWorkspaceClipboard({
     module,
     doc,
@@ -181,7 +200,7 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
     setSelectedIds,
   });
 
-  // keyboard shortcuts (extract later)
+  // keyboard shortcuts
   useEffect(() => {
     function isEditableTarget(t: EventTarget | null) {
       const el = t as HTMLElement | null;
@@ -198,7 +217,6 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
 
       const isMod = e.metaKey || e.ctrlKey;
 
-      // undo/redo
       if (isMod && (e.key === "z" || e.key === "Z")) {
         e.preventDefault();
         if (e.shiftKey) history.redo();
@@ -214,24 +232,21 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
       // pan mode (space)
       if (e.key === " ") {
         e.preventDefault();
-        setUI((prev) => ({ ...prev, panMode: true }));
+        setUI((prev) => (prev.panMode ? prev : { ...prev, panMode: true }));
         return;
       }
 
-      // escape clears selection + pan
       if (e.key === "Escape") {
         setUI((prev) => ({ ...prev, panMode: false }));
-        setSelectedIds([]); // ✅ always go through sanitizer + version bump
+        setSelectedIds([]); // ✅ goes through idempotent sanitizer
         return;
       }
 
-      // delete
       if (e.key === "Backspace" || e.key === "Delete") {
         if (selectedIds.length) commands.deleteSelected();
         return;
       }
 
-      // copy/paste/duplicate
       if (isMod && (e.key === "c" || e.key === "C")) {
         e.preventDefault();
         clip.copySelected();
@@ -253,7 +268,7 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
     function onKeyUp(e: KeyboardEvent) {
       if (e.key === " ") {
         e.preventDefault();
-        setUI((prev) => ({ ...prev, panMode: false }));
+        setUI((prev) => (prev.panMode ? { ...prev, panMode: false } : prev));
       }
     }
 
@@ -271,9 +286,8 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
       window.removeEventListener("blur", onBlur);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedIds, state.activeLayoutId, doc]);
+  }, [selectedIds, state.activeLayoutId, doc, setSelectedIds]);
 
-  // public store API (keeps existing consumers working)
   return {
     mounted,
     module,
@@ -295,7 +309,6 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
     stagePos,
     setStagePos: (p: { x: number; y: number }) => setUI((prev) => ({ ...prev, stagePos: p })),
 
-    // keep back-compat shape used by canvas & shell
     selectionVersion: ui.selectionVersion,
 
     clipboard: clip.clipboard,
@@ -314,7 +327,6 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
     setCursorWorld: clip.setCursorWorld,
     setViewportCenterWorld: clip.setViewportCenterWorld,
 
-    // commands
     addItemAtWorld: commands.addItemAtWorld,
     deleteSelected: commands.deleteSelected,
 
@@ -329,11 +341,9 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
 
     resetView: commands.resetView,
 
-    // clipboard convenience
     copySelected: clip.copySelected,
     pasteAtCursor: clip.pasteAtCursor,
 
-    // history
     undo: history.undo,
     redo: history.redo,
   };

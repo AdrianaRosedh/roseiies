@@ -24,21 +24,29 @@ export function useSelectionUIBox(args: {
   wrapRef: React.RefObject<HTMLDivElement | null>;
   stageRef: React.RefObject<Konva.Stage | null>;
   trRef: React.RefObject<Konva.Transformer | null>;
-  nodeMapRef: React.MutableRefObject<Map<string, Konva.Node>>;
+  nodeMapRef: React.MutableRefObject<Map<string, Konva.Node>>; // kept for compatibility
   selectedIds: string[];
   items: any[];
   stagePos: { x: number; y: number };
   stageScale: number;
-
-  // ✅ OPTIONAL: pass selectionVersion from CanvasStage if available
   selectionVersion?: number;
 }) {
   const [toolbarBox, setToolbarBox] = useState<ScreenBox>(null);
   const lastBoxRef = useRef<ScreenBox>(null);
 
-  // ------------------------------------------
-  // Core: compute toolbar box from selection
-  // ------------------------------------------
+  const getSelectedNodes = useCallback(() => {
+    const stage = args.stageRef.current;
+    if (!stage) return [] as Konva.Node[];
+
+    const out: Konva.Node[] = [];
+    for (const id of args.selectedIds) {
+      // ✅ deterministic: ItemNode Group has id={item.id}
+      const node = stage.findOne(`#${id}`) as Konva.Node | null;
+      if (node) out.push(node);
+    }
+    return out;
+  }, [args.stageRef, args.selectedIds]);
+
   const updateSelectionUI = useCallback(() => {
     const stage = args.stageRef.current;
     const wrap = args.wrapRef.current;
@@ -52,16 +60,10 @@ export function useSelectionUIBox(args: {
     }
 
     const tr = args.trRef.current;
+    const hasTrNodes = Boolean(tr && tr.nodes().length > 0);
 
-    // Prefer transformer rect if it has nodes attached, else fallback to first selected node
-    const hasTrNodes = Boolean(tr && tr.nodes && tr.nodes().length > 0);
-    const firstNode = args.nodeMapRef.current.get(args.selectedIds[0]);
-    const nodeForRect = hasTrNodes ? tr : firstNode;
-
-    if (!nodeForRect) {
-      // selected but node not registered yet; keep last box (don’t flicker)
-      return;
-    }
+    const nodeForRect = hasTrNodes ? tr : getSelectedNodes()[0];
+    if (!nodeForRect) return;
 
     const rect = (nodeForRect as any).getClientRect?.({ skipTransform: false }) as
       | { x: number; y: number; width: number; height: number }
@@ -69,7 +71,6 @@ export function useSelectionUIBox(args: {
 
     if (!rect) return;
 
-    // ✅ use live stage values (during pan/zoom)
     const pos = stage.position();
     const scale = stage.scaleX();
 
@@ -84,42 +85,32 @@ export function useSelectionUIBox(args: {
       lastBoxRef.current = next;
       setToolbarBox(next);
     }
-  }, [args.selectedIds, args.stageRef, args.wrapRef, args.trRef, args.nodeMapRef]);
+  }, [args.stageRef, args.wrapRef, args.trRef, args.selectedIds, getSelectedNodes]);
 
   const updateSelectionUIRaf = useRafThrottled(updateSelectionUI);
 
-  // ------------------------------------------
-  // Robust: attach transformer nodes
-  // ------------------------------------------
   const attachAttemptRef = useRef(0);
   const attachRafRef = useRef<number | null>(null);
 
   const attachTransformerNodes = useCallback(() => {
     const tr = args.trRef.current;
-    if (!tr) return;
+    const stage = args.stageRef.current;
+    if (!tr || !stage) return 0;
 
-    const nodes: Konva.Node[] = [];
-    for (const id of args.selectedIds) {
-      const n = args.nodeMapRef.current.get(id);
-      if (n) nodes.push(n);
-    }
-
+    const nodes = getSelectedNodes();
     tr.nodes(nodes);
     tr.getLayer()?.batchDraw();
-
     updateSelectionUIRaf();
     return nodes.length;
-  }, [args.selectedIds, args.trRef, args.nodeMapRef, updateSelectionUIRaf]);
+  }, [args.trRef, args.stageRef, getSelectedNodes, updateSelectionUIRaf]);
 
   useEffect(() => {
-    // clear
     if (attachRafRef.current != null) {
       cancelAnimationFrame(attachRafRef.current);
       attachRafRef.current = null;
     }
 
     if (args.selectedIds.length === 0) {
-      // detach transformer
       const tr = args.trRef.current;
       if (tr) {
         tr.nodes([]);
@@ -135,17 +126,15 @@ export function useSelectionUIBox(args: {
       attachAttemptRef.current += 1;
       const count = attachTransformerNodes();
 
-      // If nodes not ready yet, retry a few frames (mount/caching/images can delay nodeMap)
-      if (count === 0 && attachAttemptRef.current < 8) {
+      // retry while nodes mount
+      if (count === 0 && attachAttemptRef.current < 12) {
         attachRafRef.current = requestAnimationFrame(tryAttach);
         return;
       }
 
-      // done
       attachRafRef.current = null;
     };
 
-    // kick immediately, then possibly retry
     tryAttach();
 
     return () => {
@@ -155,7 +144,6 @@ export function useSelectionUIBox(args: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [args.selectedIds.join("|"), args.items, args.selectionVersion]);
 
-  // Update toolbar box on stage moves
   useEffect(() => {
     updateSelectionUIRaf();
     // eslint-disable-next-line react-hooks/exhaustive-deps

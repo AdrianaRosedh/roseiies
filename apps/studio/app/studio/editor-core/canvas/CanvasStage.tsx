@@ -93,7 +93,6 @@ export default function CanvasStage(props: {
   onPasteAtCursor: () => void;
   onDeleteSelected: () => void;
 
-  // history
   onUndo?: () => void;
   onRedo?: () => void;
 
@@ -108,7 +107,7 @@ export default function CanvasStage(props: {
 
   plantings?: PlantingRow[];
 
-  // may be passed by shell/store (optional)
+  // optional: bump this whenever the store changes selection or items batch-update
   selectionVersion?: number;
 }) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -134,19 +133,16 @@ export default function CanvasStage(props: {
   }
 
   function plantingPoint(p: any, bed: StudioItem) {
-    // 1) explicit pin override (normalized within bed)
     if (p.pin_x != null && p.pin_y != null) {
       return { x: bed.x + p.pin_x * bed.w, y: bed.y + p.pin_y * bed.h };
     }
 
-    // 2) zone centroid
     const code = String(p.zone_code ?? "").trim();
     if (code) {
       const zc = zoneCentroid(bed, code);
       if (zc) return zc;
     }
 
-    // 3) bed centroid
     return { x: bed.x + bed.w / 2, y: bed.y + bed.h / 2 };
   }
 
@@ -162,6 +158,11 @@ export default function CanvasStage(props: {
 
   const [constrainView, setConstrainView] = useState(true);
 
+  const selectedIdsRef = useRef<string[]>(props.selectedIds);
+  useEffect(() => {
+    selectedIdsRef.current = props.selectedIds;
+  }, [props.selectedIds]);
+
   useEffect(() => {
     if (editPlot) setShowPlotBoundary(true);
   }, [editPlot]);
@@ -172,19 +173,17 @@ export default function CanvasStage(props: {
   const MIN_PLOT_W = 640;
   const MIN_PLOT_H = 420;
 
-  // items index
   const idx = useItemsIndex({ doc: props.doc, selectedIds: props.selectedIds });
   const { itemsSorted, selectedSet, selectedItems, single, anyLocked, isSingleTree } = idx;
 
-  // assets
   const treeImages = useTreeImages();
   const textures = useTextures({ stagePos: props.stagePos });
 
+  // repaint when textures/images resolve
   useEffect(() => {
     stageRef.current?.batchDraw();
   }, [textures.soilImg, treeImages]);
 
-  // camera
   const camera = useCanvasCamera({
     stageRef,
     stageSize,
@@ -206,27 +205,23 @@ export default function CanvasStage(props: {
     items: props.doc.items,
     stagePos: props.stagePos,
     stageScale: props.stageScale,
-    selectionVersion: props.selectionVersion,
+    selectionVersion: props.selectionVersion, // ✅ IMPORTANT
   });
 
-  // cursor management
   const cursorRef = useRef<string>("default");
   const setWrapCursor = useCallback((cursor: string) => {
     cursorRef.current = cursor;
     if (wrapRef.current) wrapRef.current.style.cursor = cursor;
   }, []);
 
-  // keep viewport center updated
   useEffect(() => {
     props.setViewportCenterWorld(camera.worldFromScreen({ x: stageSize.w / 2, y: stageSize.h / 2 }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stageSize.w, stageSize.h, props.stagePos.x, props.stagePos.y, props.stageScale]);
 
-  // reset edit state when selection changes
   useEffect(() => setEditMode("none"), [props.selectedIds.join("|")]);
   useEffect(() => setToolbarOffset(null), [props.selectedIds.join("|")]);
 
-  // shortcuts
   useCanvasShortcuts({
     enabled: true,
 
@@ -247,13 +242,11 @@ export default function CanvasStage(props: {
     delete: props.onDeleteSelected,
 
     selectAll: () => props.setSelectedIds(props.doc.items.map((i) => i.id)),
-
     clearSelection: () => props.setSelectedIds([]),
     exitPlaceMode: () => props.setTreePlacing?.(false),
     exitEditMode: () => setEditMode("none"),
   });
 
-  // pan + zoom
   const pan = usePan({
     stageRef,
     panMode: props.panMode,
@@ -411,11 +404,8 @@ export default function CanvasStage(props: {
     return { x: round(props.cursorWorld.x), y: round(props.cursorWorld.y) };
   }, [showSnapGuides, props.cursorWorld, snapStep]);
 
-  // ---------------------------
-  // ✅ Plantings: viewport culling
-  // ---------------------------
+  // viewport culling for plantings
   const viewRect = useMemo(() => {
-    // world coords of viewport corners
     const tl = camera.worldFromScreen({ x: 0, y: 0 });
     const br = camera.worldFromScreen({ x: stageSize.w, y: stageSize.h });
 
@@ -424,7 +414,6 @@ export default function CanvasStage(props: {
     const maxX = Math.max(tl.x, br.x);
     const maxY = Math.max(tl.y, br.y);
 
-    // slightly expand (so pins don’t pop on edges)
     const pad = 80 / Math.max(0.0001, props.stageScale);
     return { minX: minX - pad, minY: minY - pad, maxX: maxX + pad, maxY: maxY + pad };
   }, [camera, stageSize.w, stageSize.h, props.stageScale]);
@@ -434,8 +423,6 @@ export default function CanvasStage(props: {
     if (all.length === 0) return [] as Array<{ p: PlantingRow; x: number; y: number; label: string }>;
 
     const out: Array<{ p: PlantingRow; x: number; y: number; label: string }> = [];
-
-    // hard cap to avoid pathological freezes if the DB gets huge
     const HARD_MAX = 2500;
 
     for (let i = 0; i < all.length && out.length < HARD_MAX; i++) {
@@ -447,7 +434,6 @@ export default function CanvasStage(props: {
 
       const pt = plantingPoint(p, bed);
 
-      // skip if outside viewport
       if (pt.x < viewRect.minX || pt.x > viewRect.maxX || pt.y < viewRect.minY || pt.y > viewRect.maxY) continue;
 
       out.push({ p, x: pt.x, y: pt.y, label: String(p.crop ?? "").trim() });
@@ -458,6 +444,7 @@ export default function CanvasStage(props: {
 
   const showLabels = props.stageScale >= 0.9;
   const LABEL_MAX = 220;
+  const isMulti = props.selectedIds.length > 1;
 
   return (
     <section
@@ -518,6 +505,7 @@ export default function CanvasStage(props: {
           y={props.stagePos.y}
           scaleX={props.stageScale}
           scaleY={props.stageScale}
+          pixelRatio={typeof window !== "undefined" ? Math.min(2, window.devicePixelRatio || 1) : 1}
           onWheel={zoom.onWheel}
           onMouseDown={pan.onStagePointerDown}
           onMouseMove={pan.onStagePointerMove}
@@ -536,7 +524,6 @@ export default function CanvasStage(props: {
             pan.onStagePointerUp();
           }}
           onDblClick={pan.onDblClick}
-          pixelRatio={typeof window !== "undefined" ? Math.min(2, window.devicePixelRatio || 1) : 1}
         >
           {/* BACKGROUND */}
           <Layer listening={false} perfectDrawEnabled={false}>
@@ -588,6 +575,7 @@ export default function CanvasStage(props: {
                 treeImages={treeImages}
                 soilImg={textures.soilImg ?? null}
                 panMode={props.panMode}
+                multiSelect={props.selectedIds.length > 1} 
                 setWrapCursor={setWrapCursor}
                 onRegister={(node: Konva.Node | null) => {
                   if (node) nodeMapRef.current.set(item.id, node);
@@ -595,9 +583,13 @@ export default function CanvasStage(props: {
                 }}
                 onSelect={(evt: { shiftKey: boolean }) => {
                   if (!evt.shiftKey) return props.setSelectedIds([item.id]);
-                  const set = new Set(props.selectedIds);
+                
+                  const current = selectedIdsRef.current;
+                  const set = new Set(current);
+                
                   if (set.has(item.id)) set.delete(item.id);
                   else set.add(item.id);
+                
                   props.setSelectedIds(Array.from(set));
                 }}
                 onCommit={(patch: Partial<StudioItem>) => {
@@ -609,8 +601,9 @@ export default function CanvasStage(props: {
               />
             ))}
           </Layer>
+          
 
-          {/* ✅ PLANTINGS — NOT nested Layer */}
+          {/* ✅ PLANTINGS (own top-level layer; no nested Layer) */}
           <Layer listening={false} perfectDrawEnabled={false}>
             {visiblePlantings.map((v, idx) => (
               <React.Fragment key={v.p.id}>
@@ -641,27 +634,27 @@ export default function CanvasStage(props: {
 
           {/* UI / TRANSFORMER / PLOT RESIZE */}
           <Layer>
-            {props.selectedIds.length >= 1 ? (
+            {props.selectedIds.length > 1 ? (
               <Transformer
                 ref={trRef}
-                // allow rotate for everything; you can restrict later if needed
-                rotateEnabled={true}
+                rotateEnabled={false} // ✅ no rotate knob for multi
                 keepRatio={false}
                 padding={6}
-                borderStroke="rgba(0,0,0,0)"
-                borderStrokeWidth={0}
-                anchorSize={9}
+                borderStroke="rgba(111, 102, 255, 0.35)"
+                borderStrokeWidth={1.2}
+                anchorSize={7}
                 anchorCornerRadius={9}
                 anchorStroke="rgba(111, 102, 255, 0.55)"
                 anchorStrokeWidth={1.2}
                 anchorFill="rgba(255,255,255,0.98)"
-                centeredScaling={false}
-                // ✅ make anchors always available; if you want trees proportional:
-                // keepRatio={isSingleTree}
+                centeredScaling={false} // ✅ not symmetric
+                enabledAnchors={["top-left", "top-right", "bottom-left", "bottom-right"]} // ✅ 4 corners only
+                shouldOverdrawWholeArea={true}
                 onTransform={() => selectionUI.updateSelectionUIRaf()}
                 onTransformEnd={() => selectionUI.updateSelectionUIRaf()}
               />
-            ) : null}  
+            ) : null}
+            
 
             {editPlot ? (
               <PlotResizeHandle

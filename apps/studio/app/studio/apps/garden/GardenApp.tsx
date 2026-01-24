@@ -25,7 +25,6 @@ export default function GardenApp({
   view: GardenView;
   onViewChange: (v: GardenView) => void;
 }) {
-  // ✅ Guard portal early (prevents weird undefined tenant situations)
   if (!portal?.tenantId) {
     return (
       <div className="p-6 text-sm text-black/60">
@@ -44,32 +43,26 @@ export default function GardenApp({
     []
   );
 
-  // ✅ If store is not ready yet, don’t touch store.state
   const activeGarden = useMemo(() => {
     if (!store?.state) return null;
     return store.state.gardens.find((g: any) => g.id === store.state.activeGardenId) ?? null;
   }, [store?.state]);
 
-  // ✅ HARD RESET invalid selection when layout changes
-  // This prevents blank canvas from stale/invalid selectedIds during view switches.
+  // Clear selection when layout changes (safe)
   useEffect(() => {
     if (!store?.state?.activeLayoutId) return;
-    try {
-      store.setSelectedIds([]);
-    } catch {}
+    store.setSelectedIds([]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [store?.state?.activeLayoutId]);
 
-  // ✅ Also clear selection when entering the designer view
-  // (extra safety: ensures Sheets interactions never poison the canvas)
+  // ✅ Clear selection once when entering designer view
+  // IMPORTANT: do NOT depend on `store` identity (it can change every render)
   useEffect(() => {
     if (view !== "designer") return;
-    try {
-      store?.setSelectedIds?.([]);
-    } catch {}
-  }, [view, store]);
+    store.setSelectedIds([]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
 
-  // ✅ Render a light shell while store boots
   if (!store?.state) {
     return (
       <AppShell
