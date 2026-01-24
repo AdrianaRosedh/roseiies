@@ -1,11 +1,11 @@
 // apps/studio/app/studio/editor-core/shell/StudioShell.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { LayoutDoc, StudioModule, StudioItem } from "../types";
 import type { PortalContext } from "../../../lib/portal/getPortalContext";
 
-// ✅ Realtime client (Option A)
+// ✅ Realtime client
 import { createBrowserSupabase } from "@roseiies/supabase/browser";
 
 import TopBar from "../TopBar";
@@ -31,6 +31,10 @@ type PlantingRow = {
   planted_at: string | null;
   pin_x: number | null;
   pin_y: number | null;
+
+  // now included by API (safe optional)
+  garden_id?: string | null;
+  created_at?: string | null;
 };
 
 function boundsOf(items: StudioItem[]) {
@@ -63,11 +67,16 @@ function sanitizePlantingsForDoc(doc: LayoutDoc, plantings: PlantingRow[]) {
       const z = p.zone_code ? String(p.zone_code).trim() : null;
       const zone_code = z && allowed.includes(z) ? z : null;
 
-      return {
-        ...p,
-        zone_code,
-      };
+      return { ...p, zone_code };
     });
+}
+
+function upsertById(prev: PlantingRow[], row: PlantingRow) {
+  const idx = prev.findIndex((r) => r.id === row.id);
+  if (idx === -1) return [row, ...prev];
+  const next = [...prev];
+  next[idx] = { ...next[idx], ...row };
+  return next;
 }
 
 export default function StudioShell(props: {
@@ -98,7 +107,7 @@ export default function StudioShell(props: {
     };
   }, []);
 
-  // ✅ Safety: clear selection when layout changes (prevents stale ids crashing selection UI)
+  // ✅ Safety: clear selection when layout changes
   useEffect(() => {
     try {
       store?.setSelectedIds?.([]);
@@ -205,39 +214,27 @@ export default function StudioShell(props: {
 
   function bringForward() {
     if (!selectedItems.length) return;
-    store.updateItemsBatch?.(
-      selectedItems.map((it: any) => ({ id: it.id, patch: { order: (it.order ?? 0) + 1 } }))
-    );
+    store.updateItemsBatch?.(selectedItems.map((it: any) => ({ id: it.id, patch: { order: (it.order ?? 0) + 1 } })));
   }
 
   function sendBackward() {
     if (!selectedItems.length) return;
-    store.updateItemsBatch?.(
-      selectedItems.map((it: any) => ({ id: it.id, patch: { order: (it.order ?? 0) - 1 } }))
-    );
+    store.updateItemsBatch?.(selectedItems.map((it: any) => ({ id: it.id, patch: { order: (it.order ?? 0) - 1 } })));
   }
 
   function bringToFront() {
     if (!selectedItems.length) return;
 
-    const maxOrder = (doc.items ?? []).reduce(
-      (m: number, it: any) => Math.max(m, it.order ?? 0),
-      0
-    );
+    const maxOrder = (doc.items ?? []).reduce((m: number, it: any) => Math.max(m, it.order ?? 0), 0);
     const sorted = [...selectedItems].sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0));
 
-    store.updateItemsBatch?.(
-      sorted.map((it: any, idx: number) => ({ id: it.id, patch: { order: maxOrder + 1 + idx } }))
-    );
+    store.updateItemsBatch?.(sorted.map((it: any, idx: number) => ({ id: it.id, patch: { order: maxOrder + 1 + idx } })));
   }
 
   function sendToBack() {
     if (!selectedItems.length) return;
 
-    const minOrder = (doc.items ?? []).reduce(
-      (m: number, it: any) => Math.min(m, it.order ?? 0),
-      0
-    );
+    const minOrder = (doc.items ?? []).reduce((m: number, it: any) => Math.min(m, it.order ?? 0), 0);
     const sorted = [...selectedItems].sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0));
 
     store.updateItemsBatch?.(
@@ -287,7 +284,6 @@ export default function StudioShell(props: {
     if (!frame) return;
 
     const { x, y, w, h } = frame;
-
     const patches: Array<{ id: string; patch: Partial<StudioItem> }> = [];
 
     selectedItems.forEach((it) => {
@@ -351,17 +347,27 @@ export default function StudioShell(props: {
   }
 
   // ---------------------------------------------------------------------------
-  // ✅ Plantings: read-only feed from Sheets (Option A: Supabase Realtime)
+  // ✅ Plantings: fast incremental realtime (no full refresh per change)
   // ---------------------------------------------------------------------------
-  const [plantings, setPlantings] = useState<PlantingRow[]>([]);
+  const [plantingsRaw, setPlantingsRaw] = useState<PlantingRow[]>([]);
+  const activeGardenId = activeGarden?.id ?? null;
+  const activeGardenName = activeGarden?.name ?? null;
+
+  const inFlightRef = useRef<AbortController | null>(null);
 
   async function refreshPlantings(gardenName: string | null) {
     if (!gardenName) {
-      setPlantings([]);
+      setPlantingsRaw([]);
       return;
     }
+
     try {
-      const res = await fetch(`/api/plantings?gardenName=${encodeURIComponent(gardenName)}`);
+      // cancel old request
+      if (inFlightRef.current) inFlightRef.current.abort();
+      const ac = new AbortController();
+      inFlightRef.current = ac;
+
+      const res = await fetch(`/api/plantings?gardenName=${encodeURIComponent(gardenName)}`, { signal: ac.signal });
       const text = await res.text();
 
       let json: any = null;
@@ -374,32 +380,23 @@ export default function StudioShell(props: {
       if (!res.ok) return;
 
       const raw = Array.isArray(json) ? (json as PlantingRow[]) : [];
-      // ✅ sanitize to prevent Konva crashes from invalid bed_id/zone_code
-      setPlantings(sanitizePlantingsForDoc(doc, raw));
+      setPlantingsRaw(raw);
     } catch {
       // ignore in designer
     }
   }
 
-  // initial fetch / garden switch / doc changes
+  // initial fetch / garden switch
   useEffect(() => {
-    refreshPlantings(activeGarden?.name ?? null);
+    refreshPlantings(activeGardenName);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeGarden?.name, portal.tenantId, store.state.activeLayoutId]);
+  }, [activeGardenName, portal.tenantId]);
 
-  // realtime subscription (tenant-scoped)
+  // realtime subscription (tenant-scoped, incremental updates)
   useEffect(() => {
     if (!portal.tenantId) return;
 
     const supabase = createBrowserSupabase();
-
-    let t: any = null;
-    const scheduleRefresh = () => {
-      if (t) clearTimeout(t);
-      t = setTimeout(() => {
-        refreshPlantings(activeGarden?.name ?? null);
-      }, 150);
-    };
 
     const channel = supabase
       .channel(`garden_plantings:${portal.tenantId}`)
@@ -411,19 +408,87 @@ export default function StudioShell(props: {
           table: "garden_plantings",
           filter: `tenant_id=eq.${portal.tenantId}`,
         },
-        (payload) => {
-          console.log("[realtime] garden_plantings change", payload);
-          scheduleRefresh();
+        (payload: any) => {
+          const evt = String(payload?.eventType ?? "").toUpperCase();
+
+          const next = payload?.new as any;
+          const prev = payload?.old as any;
+
+          // if we don't know active garden id, safest is to refresh (rare)
+          if (!activeGardenId) {
+            // light debounce: schedule microtask
+            queueMicrotask(() => refreshPlantings(activeGardenName));
+            return;
+          }
+
+          const newGarden = next?.garden_id ?? null;
+          const oldGarden = prev?.garden_id ?? null;
+
+          // if change doesn't touch this garden, ignore
+          const touchesActive =
+            newGarden === activeGardenId || oldGarden === activeGardenId;
+
+          if (!touchesActive) return;
+
+          // apply incrementally
+          setPlantingsRaw((prevRows) => {
+            // if row moved out of this garden
+            if (evt === "UPDATE" && oldGarden === activeGardenId && newGarden !== activeGardenId) {
+              return prevRows.filter((r) => r.id !== String(next?.id ?? prev?.id));
+            }
+
+            if (evt === "DELETE") {
+              const id = String(prev?.id ?? "");
+              return prevRows.filter((r) => r.id !== id);
+            }
+
+            if (evt === "INSERT") {
+              const row: PlantingRow = {
+                id: String(next?.id),
+                bed_id: next?.bed_id ?? null,
+                zone_code: next?.zone_code ?? null,
+                crop: next?.crop ?? null,
+                status: next?.status ?? null,
+                planted_at: next?.planted_at ?? null,
+                pin_x: next?.pin_x ?? null,
+                pin_y: next?.pin_y ?? null,
+                garden_id: next?.garden_id ?? null,
+                created_at: next?.created_at ?? null,
+              };
+              return upsertById(prevRows, row);
+            }
+
+            if (evt === "UPDATE") {
+              const row: PlantingRow = {
+                id: String(next?.id),
+                bed_id: next?.bed_id ?? null,
+                zone_code: next?.zone_code ?? null,
+                crop: next?.crop ?? null,
+                status: next?.status ?? null,
+                planted_at: next?.planted_at ?? null,
+                pin_x: next?.pin_x ?? null,
+                pin_y: next?.pin_y ?? null,
+                garden_id: next?.garden_id ?? null,
+                created_at: next?.created_at ?? null,
+              };
+              return upsertById(prevRows, row);
+            }
+
+            // unknown: fallback to existing list
+            return prevRows;
+          });
         }
       )
       .subscribe();
 
     return () => {
-      if (t) clearTimeout(t);
       supabase.removeChannel(channel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [portal.tenantId, activeGarden?.name, store.state.activeLayoutId]);
+  }, [portal.tenantId, activeGardenId, activeGardenName]);
+
+  // sanitize to prevent Konva crashes from invalid bed_id/zone_code (and keep Canvas fast)
+  const plantings = useMemo(() => sanitizePlantingsForDoc(doc, plantingsRaw), [doc, plantingsRaw]);
 
   // CanvasStage props
   const canvasProps = {
@@ -462,7 +527,7 @@ export default function StudioShell(props: {
     treePlacing,
     setTreePlacing,
 
-    // ✅ read-only plantings feed for pins (sanitized!)
+    // ✅ read-only plantings feed for pins (sanitized)
     plantings,
   };
 

@@ -1,3 +1,4 @@
+// apps/studio/app/studio/apps/garden/sheets/hooks/usePlantingsApi.ts
 "use client";
 
 import { studioWriteFetch } from "@/app/lib/http/studioFetch";
@@ -11,7 +12,9 @@ export async function apiGetPlantings(gardenName: string) {
   if (res.status === 404) return [] as PlantingRow[];
   if (!res.ok) throw new Error(json?.error ?? `GET /api/plantings failed (${res.status})`);
 
-  return (Array.isArray(json) ? json : []) as PlantingRow[];
+  // ✅ new response shape
+  const rows = (Array.isArray(json?.rows) ? json.rows : []) as PlantingRow[];
+  return rows;
 }
 
 export async function apiCreatePlanting(args: {

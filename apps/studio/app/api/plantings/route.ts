@@ -57,7 +57,7 @@ export async function GET(req: Request) {
 
   const { data, error } = await supabase
     .from("garden_plantings")
-    .select("id, bed_id, zone_code, crop, status, planted_at, pin_x, pin_y, created_at")
+    .select("id, tenant_id, garden_id, bed_id, zone_code, crop, status, planted_at, pin_x, pin_y, created_at")
     .eq("tenant_id", tenantId)
     .eq("garden_id", gardenId)
     .order("created_at", { ascending: false });
@@ -87,12 +87,12 @@ export async function POST(req: Request) {
   const gardenName = (body?.gardenName as string | undefined)?.trim();
   if (!gardenName) return Response.json({ error: "Missing gardenName" }, { status: 400 });
 
-  const crop = (body?.crop as string | null | undefined);
+  const crop = body?.crop as string | null | undefined;
   if (!crop || String(crop).trim() === "") {
     return Response.json({ error: "Crop is required" }, { status: 400 });
   }
 
-  const bed_id = (body?.bed_id as string | null | undefined);
+  const bed_id = body?.bed_id as string | null | undefined;
   if (!bed_id || String(bed_id).trim() === "") {
     return Response.json({ error: "Bed/Tree is required" }, { status: 400 });
   }

@@ -29,10 +29,16 @@ export function useSelectionUIBox(args: {
   items: any[];
   stagePos: { x: number; y: number };
   stageScale: number;
+
+  // ✅ OPTIONAL: pass selectionVersion from CanvasStage if available
+  selectionVersion?: number;
 }) {
   const [toolbarBox, setToolbarBox] = useState<ScreenBox>(null);
   const lastBoxRef = useRef<ScreenBox>(null);
 
+  // ------------------------------------------
+  // Core: compute toolbar box from selection
+  // ------------------------------------------
   const updateSelectionUI = useCallback(() => {
     const stage = args.stageRef.current;
     const wrap = args.wrapRef.current;
@@ -46,9 +52,16 @@ export function useSelectionUIBox(args: {
     }
 
     const tr = args.trRef.current;
+
+    // Prefer transformer rect if it has nodes attached, else fallback to first selected node
+    const hasTrNodes = Boolean(tr && tr.nodes && tr.nodes().length > 0);
     const firstNode = args.nodeMapRef.current.get(args.selectedIds[0]);
-    const nodeForRect = tr && tr.nodes().length ? tr : firstNode;
-    if (!nodeForRect) return;
+    const nodeForRect = hasTrNodes ? tr : firstNode;
+
+    if (!nodeForRect) {
+      // selected but node not registered yet; keep last box (don’t flicker)
+      return;
+    }
 
     const rect = (nodeForRect as any).getClientRect?.({ skipTransform: false }) as
       | { x: number; y: number; width: number; height: number }
@@ -56,7 +69,7 @@ export function useSelectionUIBox(args: {
 
     if (!rect) return;
 
-    // ✅ live stage is source-of-truth during pan/zoom
+    // ✅ use live stage values (during pan/zoom)
     const pos = stage.position();
     const scale = stage.scaleX();
 
@@ -75,7 +88,13 @@ export function useSelectionUIBox(args: {
 
   const updateSelectionUIRaf = useRafThrottled(updateSelectionUI);
 
-  useEffect(() => {
+  // ------------------------------------------
+  // Robust: attach transformer nodes
+  // ------------------------------------------
+  const attachAttemptRef = useRef(0);
+  const attachRafRef = useRef<number | null>(null);
+
+  const attachTransformerNodes = useCallback(() => {
     const tr = args.trRef.current;
     if (!tr) return;
 
@@ -84,13 +103,59 @@ export function useSelectionUIBox(args: {
       const n = args.nodeMapRef.current.get(id);
       if (n) nodes.push(n);
     }
+
     tr.nodes(nodes);
     tr.getLayer()?.batchDraw();
 
     updateSelectionUIRaf();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [args.selectedIds, args.items]);
+    return nodes.length;
+  }, [args.selectedIds, args.trRef, args.nodeMapRef, updateSelectionUIRaf]);
 
+  useEffect(() => {
+    // clear
+    if (attachRafRef.current != null) {
+      cancelAnimationFrame(attachRafRef.current);
+      attachRafRef.current = null;
+    }
+
+    if (args.selectedIds.length === 0) {
+      // detach transformer
+      const tr = args.trRef.current;
+      if (tr) {
+        tr.nodes([]);
+        tr.getLayer()?.batchDraw();
+      }
+      updateSelectionUIRaf();
+      return;
+    }
+
+    attachAttemptRef.current = 0;
+
+    const tryAttach = () => {
+      attachAttemptRef.current += 1;
+      const count = attachTransformerNodes();
+
+      // If nodes not ready yet, retry a few frames (mount/caching/images can delay nodeMap)
+      if (count === 0 && attachAttemptRef.current < 8) {
+        attachRafRef.current = requestAnimationFrame(tryAttach);
+        return;
+      }
+
+      // done
+      attachRafRef.current = null;
+    };
+
+    // kick immediately, then possibly retry
+    tryAttach();
+
+    return () => {
+      if (attachRafRef.current != null) cancelAnimationFrame(attachRafRef.current);
+      attachRafRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [args.selectedIds.join("|"), args.items, args.selectionVersion]);
+
+  // Update toolbar box on stage moves
   useEffect(() => {
     updateSelectionUIRaf();
     // eslint-disable-next-line react-hooks/exhaustive-deps

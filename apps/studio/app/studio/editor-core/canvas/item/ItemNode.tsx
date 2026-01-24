@@ -1,7 +1,7 @@
 // apps/studio/app/studio/editor-core/canvas/item/ItemNode.tsx
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Group, Text, Rect } from "react-konva";
 import type Konva from "konva";
 import type { CornerRadii, CurvaturePath, PolygonPath, StudioItem } from "../../types";
@@ -23,19 +23,6 @@ import { useKonvaCache } from "./hooks/useKonvaCache";
 
 export type EditMode = "none" | "corners" | "polygon" | "curvature" | "bezier";
 
-function memoEqual(a: Props, b: Props) {
-  return (
-    a.item === b.item &&
-    a.selected === b.selected &&
-    a.locked === b.locked &&
-    a.stageScale === b.stageScale &&
-    a.editMode === b.editMode &&
-    a.panMode === b.panMode &&
-    a.treeImages === b.treeImages &&
-    a.soilImg === b.soilImg
-  );
-}
-
 type Props = {
   item: StudioItem;
   selected: boolean;
@@ -54,6 +41,19 @@ type Props = {
   onCommit: (patch: Partial<StudioItem>) => void;
   onSelectionUI: () => void;
 };
+
+function memoEqual(a: Props, b: Props) {
+  return (
+    a.item === b.item &&
+    a.selected === b.selected &&
+    a.locked === b.locked &&
+    a.stageScale === b.stageScale &&
+    a.editMode === b.editMode &&
+    a.panMode === b.panMode &&
+    a.treeImages === b.treeImages &&
+    a.soilImg === b.soilImg
+  );
+}
 
 function ItemNodeImpl(props: Props) {
   const groupRef = useRef<Konva.Group>(null);
@@ -103,17 +103,6 @@ function ItemNodeImpl(props: Props) {
   // label readable rAF helper
   const keepLabelReadableRaf = useReadableLabel({ groupRef, textRef });
 
-  // optional caching for non-selected, non-hovered nodes
-  useKonvaCache({
-    groupRef,
-    item: props.item,
-    selected: props.selected,
-    hovered,
-    editMode: props.editMode,
-    panMode: props.panMode,
-    stageScale: props.stageScale,
-  });
-
   const transformStartRef = useRef<{ x: number; y: number } | null>(null);
 
   const s = props.item.style;
@@ -121,6 +110,7 @@ function ItemNodeImpl(props: Props) {
   const stroke = rgba(s.stroke, s.strokeOpacity);
   const shadow = s.shadow;
   const shadowColor = shadow ? rgba(shadow.color, shadow.opacity) : "transparent";
+  const shadowColorForKonva = shadowColor;
 
   const treeVariant = props.item.meta?.tree?.variant ?? "tree-01";
   const treeImg = props.treeImages?.[treeVariant];
@@ -148,6 +138,34 @@ function ItemNodeImpl(props: Props) {
 
   const code = (props.item.meta as any)?.code as string | undefined;
   const showCode = Boolean(code) && (isSelected || hovered || props.stageScale > 1.05);
+
+  // ✅ IMPORTANT: prevent caching “empty” before images load
+  const assetsReady = useMemo(() => {
+    if (props.item.type === "bed") return Boolean(props.soilImg);
+    if (props.item.type === "tree") return Boolean(treeImg);
+    return true;
+  }, [props.item.type, props.soilImg, treeImg]);
+
+  // ✅ bump cache when assets become ready (forces recache)
+  const cacheKey = useMemo(() => {
+    if (props.item.type === "bed") return `bed:soil:${props.soilImg ? 1 : 0}`;
+    if (props.item.type === "tree") return `tree:${treeVariant}:${treeImg ? 1 : 0}`;
+    return "";
+  }, [props.item.type, props.soilImg, treeVariant, treeImg]);
+
+  // optional caching for non-selected, non-hovered nodes
+  useKonvaCache({
+    groupRef,
+    item: props.item,
+    selected: props.selected,
+    hovered,
+    editMode: props.editMode,
+    panMode: props.panMode,
+    stageScale: props.stageScale,
+
+    assetsReady,
+    cacheKey,
+  });
 
   return (
     <Group
@@ -248,14 +266,14 @@ function ItemNodeImpl(props: Props) {
         rectRef={rectRef}
         fill={fill}
         stroke={stroke}
-        shadowColor={shadowColor}
+        shadowColor={shadowColorForKonva}
         soilImg={props.soilImg}
         treeImg={treeImg}
         rectCornerRadius={rectCornerRadius}
         draftCurv={draftCurv}
         draftPoly={draftPoly}
       />
-       
+
       {/* Bed zones overlay (visual only) */}
       {showZones && zones ? (
         <Group listening={false}>
@@ -265,14 +283,14 @@ function ItemNodeImpl(props: Props) {
             const zw = (z.w ?? 0) * props.item.w;
             const zh = (z.h ?? 0) * props.item.h;
 
-            const code = String((z as any).code ?? "").trim();
-            const label = code || (z as any).label || "";
+            const zcode = String((z as any).code ?? "").trim();
+            const label = zcode || (z as any).label || "";
 
             // avoid noisy labels when zoomed out
-            const showLabel = Boolean(label) && (props.selected || hovered || props.stageScale > 1.0);
+            const showZLabel = Boolean(label) && (props.selected || hovered || props.stageScale > 1.0);
 
             return (
-              <Group key={`${code || idx}`} listening={false}>
+              <Group key={`${zcode || idx}`} listening={false}>
                 <Rect
                   x={zx}
                   y={zy}
@@ -285,7 +303,7 @@ function ItemNodeImpl(props: Props) {
                   cornerRadius={6}
                   listening={false}
                 />
-                {showLabel ? (
+                {showZLabel ? (
                   <Text
                     x={zx + 6}
                     y={zy + 4}
@@ -300,7 +318,6 @@ function ItemNodeImpl(props: Props) {
           })}
         </Group>
       ) : null}
-
 
       {/* Label + code (subtle) */}
       {showLabel ? (

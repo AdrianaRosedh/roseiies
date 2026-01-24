@@ -53,6 +53,19 @@ function hasPolygon(item: StudioItem) {
   return Boolean(item.meta?.polygon?.points?.length);
 }
 
+type PlantingRow = {
+  id: string;
+  bed_id: string | null;
+  zone_code: string | null;
+  crop: string | null;
+  status: string | null;
+  planted_at: string | null;
+  pin_x: number | null;
+  pin_y: number | null;
+  garden_id?: string | null;
+  created_at?: string | null;
+};
+
 export default function CanvasStage(props: {
   module: StudioModule;
   doc: LayoutDoc;
@@ -80,7 +93,7 @@ export default function CanvasStage(props: {
   onPasteAtCursor: () => void;
   onDeleteSelected: () => void;
 
-  // ✅ NEW: history (wire these from store for Cmd+Z to work)
+  // history
   onUndo?: () => void;
   onRedo?: () => void;
 
@@ -92,25 +105,18 @@ export default function CanvasStage(props: {
 
   treePlacing?: boolean;
   setTreePlacing?: (v: boolean) => void;
-    plantings?: Array<{
-    id: string;
-    bed_id: string | null;
-    zone_code: string | null;
-    crop: string | null;
-    status: string | null;
-    planted_at: string | null;
-    pin_x: number | null;
-    pin_y: number | null;
-  }>;
 
+  plantings?: PlantingRow[];
 
+  // may be passed by shell/store (optional)
+  selectionVersion?: number;
 }) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<Konva.Stage>(null);
   const trRef = useRef<Konva.Transformer>(null);
   const nodeMapRef = useRef<Map<string, Konva.Node>>(new Map());
 
-    const bedById = useMemo(() => {
+  const bedById = useMemo(() => {
     const m = new Map<string, StudioItem>();
     for (const it of props.doc.items) if (it.type === "bed") m.set(it.id, it);
     return m;
@@ -144,7 +150,6 @@ export default function CanvasStage(props: {
     return { x: bed.x + bed.w / 2, y: bed.y + bed.h / 2 };
   }
 
-
   const isCoarse = useIsCoarsePointer();
   const stageSize = useStageSize(wrapRef);
 
@@ -160,11 +165,6 @@ export default function CanvasStage(props: {
   useEffect(() => {
     if (editPlot) setShowPlotBoundary(true);
   }, [editPlot]);
-  
-  useEffect(() => {
-  console.log("[canvas] plantings", props.plantings?.length ?? 0);
-}, [props.plantings]);
-
 
   const plotW = draftCanvas?.w ?? props.doc.canvas.width;
   const plotH = draftCanvas?.h ?? props.doc.canvas.height;
@@ -172,7 +172,7 @@ export default function CanvasStage(props: {
   const MIN_PLOT_W = 640;
   const MIN_PLOT_H = 420;
 
-  // B) items index
+  // items index
   const idx = useItemsIndex({ doc: props.doc, selectedIds: props.selectedIds });
   const { itemsSorted, selectedSet, selectedItems, single, anyLocked, isSingleTree } = idx;
 
@@ -180,7 +180,11 @@ export default function CanvasStage(props: {
   const treeImages = useTreeImages();
   const textures = useTextures({ stagePos: props.stagePos });
 
-  // A) camera (uses stageRef to prevent zoom snapping)
+  useEffect(() => {
+    stageRef.current?.batchDraw();
+  }, [textures.soilImg, treeImages]);
+
+  // camera
   const camera = useCanvasCamera({
     stageRef,
     stageSize,
@@ -202,6 +206,7 @@ export default function CanvasStage(props: {
     items: props.doc.items,
     stagePos: props.stagePos,
     stageScale: props.stageScale,
+    selectionVersion: props.selectionVersion,
   });
 
   // cursor management
@@ -213,9 +218,7 @@ export default function CanvasStage(props: {
 
   // keep viewport center updated
   useEffect(() => {
-    props.setViewportCenterWorld(
-      camera.worldFromScreen({ x: stageSize.w / 2, y: stageSize.h / 2 })
-    );
+    props.setViewportCenterWorld(camera.worldFromScreen({ x: stageSize.w / 2, y: stageSize.h / 2 }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stageSize.w, stageSize.h, props.stagePos.x, props.stagePos.y, props.stageScale]);
 
@@ -267,7 +270,7 @@ export default function CanvasStage(props: {
     onAddItemAtWorld: props.onAddItemAtWorld,
     tool: props.tool,
     hasSelection: props.selectedIds.length > 0,
-    placeMode: props.treePlacing ? { tool: "tree" as any, keepOpen: true } : null,
+    placeMode: props.treePlacing ? ({ tool: "tree" as any, keepOpen: true } as any) : null,
     onExitPlaceMode: () => props.setTreePlacing?.(false),
   });
 
@@ -338,8 +341,7 @@ export default function CanvasStage(props: {
     if (hasBezier(single)) return setEditMode((m) => (m === "bezier" ? "none" : "bezier"));
     if (hasCurvature(single)) return setEditMode((m) => (m === "curvature" ? "none" : "curvature"));
     if (hasPolygon(single)) return setEditMode((m) => (m === "polygon" ? "none" : "polygon"));
-    if (isRectLike(single) && !isPillLike(single))
-      return setEditMode((m) => (m === "corners" ? "none" : "corners"));
+    if (isRectLike(single) && !isPillLike(single)) return setEditMode((m) => (m === "corners" ? "none" : "corners"));
     setEditMode("none");
   }, [single]);
 
@@ -397,9 +399,7 @@ export default function CanvasStage(props: {
             ? "Bezier"
             : "Edit";
 
-  const canRadius =
-    Boolean(single) && isRectLike(single!) && !hasBezier(single!) && !hasCurvature(single!) && !hasPolygon(single!);
-
+  const canRadius = Boolean(single) && isRectLike(single!) && !hasBezier(single!) && !hasCurvature(single!) && !hasPolygon(single!);
   const canConvert = Boolean(single) && !anyLocked && !isSingleTree;
   const canEdit = Boolean(single) && !anyLocked && !isSingleTree;
 
@@ -410,6 +410,54 @@ export default function CanvasStage(props: {
     const round = (v: number) => Math.round(v / snapStep) * snapStep;
     return { x: round(props.cursorWorld.x), y: round(props.cursorWorld.y) };
   }, [showSnapGuides, props.cursorWorld, snapStep]);
+
+  // ---------------------------
+  // ✅ Plantings: viewport culling
+  // ---------------------------
+  const viewRect = useMemo(() => {
+    // world coords of viewport corners
+    const tl = camera.worldFromScreen({ x: 0, y: 0 });
+    const br = camera.worldFromScreen({ x: stageSize.w, y: stageSize.h });
+
+    const minX = Math.min(tl.x, br.x);
+    const minY = Math.min(tl.y, br.y);
+    const maxX = Math.max(tl.x, br.x);
+    const maxY = Math.max(tl.y, br.y);
+
+    // slightly expand (so pins don’t pop on edges)
+    const pad = 80 / Math.max(0.0001, props.stageScale);
+    return { minX: minX - pad, minY: minY - pad, maxX: maxX + pad, maxY: maxY + pad };
+  }, [camera, stageSize.w, stageSize.h, props.stageScale]);
+
+  const visiblePlantings = useMemo(() => {
+    const all = props.plantings ?? [];
+    if (all.length === 0) return [] as Array<{ p: PlantingRow; x: number; y: number; label: string }>;
+
+    const out: Array<{ p: PlantingRow; x: number; y: number; label: string }> = [];
+
+    // hard cap to avoid pathological freezes if the DB gets huge
+    const HARD_MAX = 2500;
+
+    for (let i = 0; i < all.length && out.length < HARD_MAX; i++) {
+      const p = all[i];
+      if (!p?.bed_id) continue;
+
+      const bed = bedById.get(p.bed_id);
+      if (!bed) continue;
+
+      const pt = plantingPoint(p, bed);
+
+      // skip if outside viewport
+      if (pt.x < viewRect.minX || pt.x > viewRect.maxX || pt.y < viewRect.minY || pt.y > viewRect.maxY) continue;
+
+      out.push({ p, x: pt.x, y: pt.y, label: String(p.crop ?? "").trim() });
+    }
+
+    return out;
+  }, [props.plantings, bedById, viewRect.minX, viewRect.minY, viewRect.maxX, viewRect.maxY]);
+
+  const showLabels = props.stageScale >= 0.9;
+  const LABEL_MAX = 220;
 
   return (
     <section
@@ -488,7 +536,9 @@ export default function CanvasStage(props: {
             pan.onStagePointerUp();
           }}
           onDblClick={pan.onDblClick}
+          pixelRatio={typeof window !== "undefined" ? Math.min(2, window.devicePixelRatio || 1) : 1}
         >
+          {/* BACKGROUND */}
           <Layer listening={false} perfectDrawEnabled={false}>
             <StageBackground
               plotW={plotW}
@@ -501,6 +551,7 @@ export default function CanvasStage(props: {
             />
           </Layer>
 
+          {/* PLOT + GRID */}
           <Layer listening={false} perfectDrawEnabled={false}>
             <PlotSurface
               plotW={plotW}
@@ -523,6 +574,7 @@ export default function CanvasStage(props: {
             ) : null}
           </Layer>
 
+          {/* ITEMS */}
           <Layer>
             {itemsSorted.map((item) => (
               <ItemNode
@@ -558,32 +610,42 @@ export default function CanvasStage(props: {
             ))}
           </Layer>
 
+          {/* ✅ PLANTINGS — NOT nested Layer */}
+          <Layer listening={false} perfectDrawEnabled={false}>
+            {visiblePlantings.map((v, idx) => (
+              <React.Fragment key={v.p.id}>
+                <Circle
+                  x={v.x}
+                  y={v.y}
+                  radius={6}
+                  fill="rgba(255,255,255,0.92)"
+                  stroke="rgba(0,0,0,0.55)"
+                  strokeWidth={1}
+                  listening={false}
+                  perfectDrawEnabled={false}
+                />
+                {showLabels && v.label && idx < LABEL_MAX ? (
+                  <Text
+                    x={v.x + 9}
+                    y={v.y - 7}
+                    text={v.label}
+                    fontSize={12}
+                    fill="rgba(0,0,0,0.70)"
+                    listening={false}
+                    perfectDrawEnabled={false}
+                  />
+                ) : null}
+              </React.Fragment>
+            ))}
+          </Layer>
+
+          {/* UI / TRANSFORMER / PLOT RESIZE */}
           <Layer>
-            {props.plantings?.length ? (
-              <Layer listening={false}>
-                {props.plantings.map((p) => {
-                  if (!p.bed_id) return null;
-                  const bed = bedById.get(p.bed_id);
-                  if (!bed) return null;
-                
-                  const pt = plantingPoint(p, bed);
-                  const label = String(p.crop ?? "").trim();
-                
-                  return (
-                    <React.Fragment key={p.id}>
-                      <Circle x={pt.x} y={pt.y} radius={6} />
-                      {label ? <Text x={pt.x + 8} y={pt.y - 7} text={label} fontSize={12} /> : null}
-                    </React.Fragment>
-                  );
-                })}
-              </Layer>
-            ) : null}
-
-
-            {props.selectedIds.length > 1 ? (
+            {props.selectedIds.length >= 1 ? (
               <Transformer
                 ref={trRef}
-                rotateEnabled={isSingleTree}
+                // allow rotate for everything; you can restrict later if needed
+                rotateEnabled={true}
                 keepRatio={false}
                 padding={6}
                 borderStroke="rgba(0,0,0,0)"
@@ -594,10 +656,12 @@ export default function CanvasStage(props: {
                 anchorStrokeWidth={1.2}
                 anchorFill="rgba(255,255,255,0.98)"
                 centeredScaling={false}
+                // ✅ make anchors always available; if you want trees proportional:
+                // keepRatio={isSingleTree}
                 onTransform={() => selectionUI.updateSelectionUIRaf()}
                 onTransformEnd={() => selectionUI.updateSelectionUIRaf()}
               />
-            ) : null}
+            ) : null}  
 
             {editPlot ? (
               <PlotResizeHandle

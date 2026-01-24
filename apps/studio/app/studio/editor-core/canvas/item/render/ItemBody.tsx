@@ -29,8 +29,7 @@ export default function ItemBody(props: {
   draftCurv: CurvaturePath | null;
   draftPoly: PolygonPath | null;
 }) {
-  const { item, isSelected, rectRef, fill, stroke, shadowColor, soilImg, treeImg, rectCornerRadius } =
-    props;
+  const { item, isSelected, rectRef, fill, stroke, shadowColor, soilImg, treeImg, rectCornerRadius } = props;
 
   const s = item.style;
   const shadow = s.shadow;
@@ -96,6 +95,17 @@ export default function ItemBody(props: {
         />
       ) : isRectLike(item) ? (
         <Group>
+          {/* ✅ HIT TARGET (ensures beds/rects always clickable) */}
+          <Rect
+            x={0}
+            y={0}
+            width={item.w}
+            height={item.h}
+            fill="rgba(0,0,0,0.001)"
+            listening
+            perfectDrawEnabled={false}
+          />
+
           {/* AO shadow */}
           <Rect
             x={2.5}

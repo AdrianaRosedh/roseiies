@@ -1,8 +1,9 @@
 // apps/studio/app/studio/apps/garden/sheets/hooks/usePlantings.ts
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PlantingRow } from "../types";
+import { createBrowserSupabase } from "@roseiies/supabase/browser";
 
 function getStudioToken(): string | null {
   const t = process.env.NEXT_PUBLIC_ROSEIIES_STUDIO_TOKEN;
@@ -10,12 +11,27 @@ function getStudioToken(): string | null {
   return t.trim();
 }
 
+function upsertById(prev: PlantingRow[], row: PlantingRow) {
+  const idx = prev.findIndex((r) => r.id === row.id);
+  if (idx === -1) return [row, ...prev];
+  const next = [...prev];
+  next[idx] = { ...next[idx], ...row };
+  return next;
+}
+
 export function usePlantings(args: { gardenName: string | null; tenantId: string }) {
-  const { gardenName } = args;
+  const { gardenName, tenantId } = args;
 
   const [rows, setRows] = useState<PlantingRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
+
+  // once we have data, we can learn the garden_id from rows (API now includes it)
+  const gardenIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const gid = (rows as any)?.[0]?.garden_id ?? null;
+    if (gid && typeof gid === "string") gardenIdRef.current = gid;
+  }, [rows]);
 
   const refresh = useCallback(async () => {
     if (!gardenName) return;
@@ -46,9 +62,81 @@ export function usePlantings(args: { gardenName: string | null; tenantId: string
     refresh();
   }, [refresh]);
 
+  // ✅ Realtime: incremental updates (fallback to refresh if we can’t confidently filter)
+  useEffect(() => {
+    if (!tenantId) return;
+
+    const supabase = createBrowserSupabase();
+
+    let t: any = null;
+    const scheduleRefresh = () => {
+      if (t) clearTimeout(t);
+      t = setTimeout(() => refresh(), 120);
+    };
+
+    const channel = supabase
+      .channel(`garden_plantings:sheets:${tenantId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "garden_plantings",
+          filter: `tenant_id=eq.${tenantId}`,
+        },
+        (payload: any) => {
+          const evt = String(payload?.eventType ?? "").toUpperCase();
+          const next = payload?.new as any;
+          const prev = payload?.old as any;
+
+          const activeGardenId = gardenIdRef.current;
+
+          // If we don’t know garden_id yet (empty table), safest is refresh.
+          if (!activeGardenId) return scheduleRefresh();
+
+          const newGarden = next?.garden_id ?? null;
+          const oldGarden = prev?.garden_id ?? null;
+
+          const touchesActive = newGarden === activeGardenId || oldGarden === activeGardenId;
+          if (!touchesActive) return;
+
+          setRows((prevRows) => {
+            if (evt === "DELETE") {
+              const id = String(prev?.id ?? "");
+              return prevRows.filter((r) => r.id !== id);
+            }
+
+            if (evt === "INSERT" || evt === "UPDATE") {
+              const row: any = {
+                id: String(next?.id),
+                bed_id: next?.bed_id ?? null,
+                zone_code: next?.zone_code ?? null,
+                crop: next?.crop ?? null,
+                status: next?.status ?? null,
+                planted_at: next?.planted_at ?? null,
+                pin_x: next?.pin_x ?? null,
+                pin_y: next?.pin_y ?? null,
+                garden_id: next?.garden_id ?? null,
+                created_at: next?.created_at ?? null,
+              };
+              return upsertById(prevRows, row as PlantingRow);
+            }
+
+            return prevRows;
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      if (t) clearTimeout(t);
+      supabase.removeChannel(channel);
+    };
+  }, [tenantId, refresh]);
+
   /**
    * IMPORTANT:
-   * create() is now PURE:
+   * create() is PURE:
    * - returns created row
    * - does NOT modify rows state
    * The caller (Sheets model) owns optimistic insertion + replacement.
@@ -58,10 +146,7 @@ export function usePlantings(args: { gardenName: string | null; tenantId: string
       if (!gardenName) throw new Error("Missing gardenName");
 
       const token = getStudioToken();
-      if (!token) {
-        // Let caller handle local fallback if desired
-        throw new Error("Missing NEXT_PUBLIC_ROSEIIES_STUDIO_TOKEN");
-      }
+      if (!token) throw new Error("Missing NEXT_PUBLIC_ROSEIIES_STUDIO_TOKEN");
 
       const payload = { gardenName, ...draft };
 
@@ -90,8 +175,7 @@ export function usePlantings(args: { gardenName: string | null; tenantId: string
   );
 
   /**
-   * patch() can stay optimistic here (fine).
-   * But it MUST NOT throw, or it can kill editing UX.
+   * patch() stays optimistic and MUST NOT throw.
    */
   const patch = useCallback(async (id: string, patchObj: Partial<PlantingRow>) => {
     // optimistic update always
