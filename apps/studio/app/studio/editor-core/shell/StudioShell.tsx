@@ -5,6 +5,10 @@ import { useEffect, useMemo, useState } from "react";
 import type { LayoutDoc, StudioModule, StudioItem } from "../types";
 import type { PortalContext } from "../../../lib/portal/getPortalContext";
 
+// ✅ Realtime client (Option A)
+import { createBrowserSupabase } from "@roseiies/supabase/browser";
+
+
 import TopBar from "../TopBar";
 import LeftToolbar from "../LeftToolbar";
 import Inspector from "../Inspector";
@@ -18,6 +22,17 @@ import CollapsedRail from "./desktop/CollapsedRail";
 export type MobileSheetKind = "context" | "tools" | "inspector" | "more" | null;
 
 type AlignTo = "selection" | "plot";
+
+type PlantingRow = {
+  id: string;
+  bed_id: string | null;
+  zone_code: string | null;
+  crop: string | null;
+  status: string | null;
+  planted_at: string | null;
+  pin_x: number | null;
+  pin_y: number | null;
+};
 
 function boundsOf(items: StudioItem[]) {
   const minX = Math.min(...items.map((i) => i.x));
@@ -35,6 +50,7 @@ export default function StudioShell(props: {
 }) {
   const { module, store, portal, onBack } = props;
 
+  // lock viewport scroll
   useEffect(() => {
     const html = document.documentElement;
     const body = document.body;
@@ -54,6 +70,7 @@ export default function StudioShell(props: {
     };
   }, []);
 
+  // tool placement state
   const [treePlacing, setTreePlacing] = useState(false);
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -63,6 +80,7 @@ export default function StudioShell(props: {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [treePlacing]);
 
+  // panel UI
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
 
@@ -72,10 +90,12 @@ export default function StudioShell(props: {
 
   const [alignTo, setAlignTo] = useState<AlignTo>("selection");
 
+  // mobile
   const [mobileSheet, setMobileSheet] = useState<MobileSheetKind>(null);
   const toggleSheet = (k: Exclude<MobileSheetKind, null>) =>
     setMobileSheet((v: MobileSheetKind) => (v === k ? null : k));
 
+  // active garden/layout/doc
   const activeGarden = useMemo(
     () => store.state.gardens.find((g: any) => g.id === store.state.activeGardenId) ?? null,
     [store.state]
@@ -93,12 +113,13 @@ export default function StudioShell(props: {
     [store.state]
   );
 
-  const doc = useMemo(() => {
+  const doc: LayoutDoc = useMemo(() => {
     const id = store.state.activeLayoutId;
     if (!id) return store.emptyDoc();
     return store.state.docs[id] ?? store.emptyDoc();
   }, [store.state.activeLayoutId, store.state.docs]);
 
+  // capabilities
   const canCopy = store.selectedIds.length > 0;
   const canPaste = !!store.clipboard;
   const canDelete = store.selectedIds.length > 0;
@@ -163,7 +184,10 @@ export default function StudioShell(props: {
   function bringToFront() {
     if (!selectedItems.length) return;
 
-    const maxOrder = (doc.items ?? []).reduce((m: number, it: any) => Math.max(m, it.order ?? 0), 0);
+    const maxOrder = (doc.items ?? []).reduce(
+      (m: number, it: any) => Math.max(m, it.order ?? 0),
+      0
+    );
     const sorted = [...selectedItems].sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0));
 
     store.updateItemsBatch?.(
@@ -174,11 +198,17 @@ export default function StudioShell(props: {
   function sendToBack() {
     if (!selectedItems.length) return;
 
-    const minOrder = (doc.items ?? []).reduce((m: number, it: any) => Math.min(m, it.order ?? 0), 0);
+    const minOrder = (doc.items ?? []).reduce(
+      (m: number, it: any) => Math.min(m, it.order ?? 0),
+      0
+    );
     const sorted = [...selectedItems].sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0));
 
     store.updateItemsBatch?.(
-      sorted.map((it: any, idx: number) => ({ id: it.id, patch: { order: minOrder - sorted.length + idx } }))
+      sorted.map((it: any, idx: number) => ({
+        id: it.id,
+        patch: { order: minOrder - sorted.length + idx },
+      }))
     );
   }
 
@@ -284,7 +314,82 @@ export default function StudioShell(props: {
     store.updateItemsBatch?.(patches);
   }
 
-    const canvasProps = {
+  // ---------------------------------------------------------------------------
+  // ✅ Plantings: read-only feed from Sheets (Option A: Supabase Realtime)
+  // ---------------------------------------------------------------------------
+  const [plantings, setPlantings] = useState<PlantingRow[]>([]);
+
+  async function refreshPlantings(gardenName: string | null) {
+    if (!gardenName) {
+      setPlantings([]);
+      return;
+    }
+    try {
+      const res = await fetch(`/api/plantings?gardenName=${encodeURIComponent(gardenName)}`);
+      const text = await res.text();
+
+      let json: any = null;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch {
+        return;
+      }
+
+      if (!res.ok) return;
+      setPlantings(Array.isArray(json) ? (json as PlantingRow[]) : []);
+    } catch {
+      // ignore in designer
+    }
+  }
+
+  // initial fetch / garden switch
+  useEffect(() => {
+    refreshPlantings(activeGarden?.name ?? null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeGarden?.name, portal.tenantId]);
+
+  // realtime subscription (tenant-scoped)
+  useEffect(() => {
+    if (!portal.tenantId) return;
+
+    const supabase = createBrowserSupabase();
+
+    let t: any = null;
+    const scheduleRefresh = () => {
+      if (t) clearTimeout(t);
+      t = setTimeout(() => {
+        refreshPlantings(activeGarden?.name ?? null);
+      }, 150);
+    };
+
+    const channel = supabase
+      .channel(`garden_plantings:${portal.tenantId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "garden_plantings",
+          filter: `tenant_id=eq.${portal.tenantId}`,
+          
+        },
+        (payload) => {
+          console.log("[realtime] garden_plantings change", payload);
+          scheduleRefresh();
+        }
+        
+      )
+      .subscribe();
+
+    return () => {
+      if (t) clearTimeout(t);
+      supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [portal.tenantId, activeGarden?.name]);
+
+  // CanvasStage props
+  const canvasProps = {
     module,
     doc,
     tool: store.tool,
@@ -305,17 +410,23 @@ export default function StudioShell(props: {
     onPasteAtCursor: store.pasteAtCursor,
     onDeleteSelected: store.deleteSelected,
 
-    // ✅ Undo / Redo for Cmd+Z (works if your store exposes either shape)
+    // Undo / Redo
     onUndo: store.undo,
     onRedo: store.redo,
 
     showGrid,
+    snapToGrid,
+    snapStep: SNAP_STEP,
+    cursorWorld: store.cursorWorld,
 
-    // ✅ NEW: lets CanvasStage refresh transformer/toolbar after batch ops
+    // lets CanvasStage refresh transformer/toolbar after batch ops
     selectionVersion: store.selectionVersion,
 
     treePlacing,
     setTreePlacing,
+
+    // ✅ read-only plantings feed for pins
+    plantings,
   };
 
   const LEFT_OPEN_W = 280;
@@ -405,7 +516,7 @@ export default function StudioShell(props: {
           </div>
 
           <div className="flex-1 rounded-2xl border border-black/10 bg-white/40 shadow-sm overflow-hidden relative">
-            <CanvasStage {...canvasProps} />
+            <CanvasStage {...(canvasProps as any)} />
           </div>
 
           <div className="shrink-0 transition-[width] duration-300 ease-out" style={{ width: rightW }}>
@@ -422,9 +533,10 @@ export default function StudioShell(props: {
                       onUpdateItem={store.updateItem}
                       onUpdateMeta={store.updateMeta}
                       onUpdateStyle={store.updateStyle}
-                      onAddPlant={store.addPlantToBed}
-                      onUpdatePlant={store.updatePlant}
-                      onRemovePlant={store.removePlant}
+                      // ✅ Plants are read-only in Designer (Sheets is source of truth)
+                      onAddPlant={() => {}}
+                      onUpdatePlant={() => {}}
+                      onRemovePlant={() => {}}
                     />
                   </div>
                 </div>

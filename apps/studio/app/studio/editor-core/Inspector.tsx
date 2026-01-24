@@ -4,25 +4,137 @@
 import { useMemo } from "react";
 import type { StudioItem, StudioModule, PlantBlock, PlantPin } from "./types";
 
-type ZoneBlock = {
-  id: string;
-  name: string;
-  x: number; // 0..1
-  y: number; // 0..1
-  w: number; // 0..1
-  h: number; // 0..1
-  public?: boolean;
-  note?: string;
-};
+/* ---------------------------------------------
+  Zones (v1 preset grid)
+  Stored on bed.meta.zones as normalized rects:
+  [{ code: "A", x:0, y:0, w:0.5, h:0.5 }, ...]
+--------------------------------------------- */
 
-function uid(prefix: string) {
-  return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now()}`;
+type ZoneRect = { code: string; x: number; y: number; w: number; h: number };
+
+type ZonePreset = "none" | "1x2" | "2x1" | "2x2" | "3x1" | "1x3";
+
+const ZONE_PRESETS: Array<{ key: ZonePreset; label: string }> = [
+  { key: "none", label: "None" },
+  { key: "1x2", label: "1 × 2" },
+  { key: "2x1", label: "2 × 1" },
+  { key: "2x2", label: "2 × 2" },
+  { key: "3x1", label: "3 × 1" },
+  { key: "1x3", label: "1 × 3" },
+];
+
+function alphaCode(i: number) {
+  // 0->A, 1->B ... 25->Z, 26->AA...
+  let n = i;
+  let s = "";
+  while (n >= 0) {
+    s = String.fromCharCode((n % 26) + 65) + s;
+    n = Math.floor(n / 26) - 1;
+  }
+  return s;
 }
 
-function getZones(item: StudioItem): ZoneBlock[] {
+function makeZones(preset: ZonePreset): ZoneRect[] {
+  if (preset === "none") return [];
+
+  let cols = 1;
+  let rows = 1;
+
+  if (preset === "1x2") {
+    cols = 2;
+    rows = 1;
+  }
+  if (preset === "2x1") {
+    cols = 1;
+    rows = 2;
+  }
+  if (preset === "2x2") {
+    cols = 2;
+    rows = 2;
+  }
+  if (preset === "3x1") {
+    cols = 1;
+    rows = 3;
+  }
+  if (preset === "1x3") {
+    cols = 3;
+    rows = 1;
+  }
+
+  const zones: ZoneRect[] = [];
+  const w = 1 / cols;
+  const h = 1 / rows;
+
+  let idx = 0;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      zones.push({
+        code: alphaCode(idx++),
+        x: c * w,
+        y: r * h,
+        w,
+        h,
+      });
+    }
+  }
+  return zones;
+}
+
+function inferPresetFromZones(zones: any): ZonePreset {
+  if (!Array.isArray(zones) || zones.length === 0) return "none";
+
+  const xs = Array.from(
+    new Set(
+      zones
+        .map((z) => Number(z?.x))
+        .filter((n) => Number.isFinite(n))
+        .map((n) => Number(n.toFixed(6)))
+    )
+  ).sort((a, b) => a - b);
+
+  const ys = Array.from(
+    new Set(
+      zones
+        .map((z) => Number(z?.y))
+        .filter((n) => Number.isFinite(n))
+        .map((n) => Number(n.toFixed(6)))
+    )
+  ).sort((a, b) => a - b);
+
+  const cols = xs.length || 1;
+  const rows = ys.length || 1;
+
+  if (rows === 1 && cols === 1) return "none";
+  if (rows === 1 && cols === 2) return "1x2";
+  if (rows === 2 && cols === 1) return "2x1";
+  if (rows === 2 && cols === 2) return "2x2";
+  if (rows === 3 && cols === 1) return "3x1";
+  if (rows === 1 && cols === 3) return "1x3";
+
+  return "none";
+}
+
+function getZoneRects(item: StudioItem): ZoneRect[] {
   const m: any = item.meta as any;
   const z = m?.zones;
-  return Array.isArray(z) ? (z as ZoneBlock[]) : [];
+  if (!Array.isArray(z)) return [];
+  // tolerate legacy shapes but keep only normalized rects with code
+  return z
+    .map((it: any) => ({
+      code: String(it?.code ?? "").trim(),
+      x: Number(it?.x),
+      y: Number(it?.y),
+      w: Number(it?.w),
+      h: Number(it?.h),
+    }))
+    .filter(
+      (z: ZoneRect) =>
+        z.code &&
+        Number.isFinite(z.x) &&
+        Number.isFinite(z.y) &&
+        Number.isFinite(z.w) &&
+        Number.isFinite(z.h)
+    );
 }
 
 export default function Inspector(props: {
@@ -64,7 +176,7 @@ export default function Inspector(props: {
     );
   }
 
-  // ✅ Multi selection: keep it minimal (bulk styling moved to Tools)
+  // ✅ Multi selection: keep it minimal
   if (isMulti) {
     return (
       <aside className="border-l border-black/10 bg-white/60 p-4 h-full overflow-auto">
@@ -74,8 +186,7 @@ export default function Inspector(props: {
         <div className="mt-6 rounded-2xl border border-black/10 bg-white p-4 shadow-sm">
           <div className="text-xs text-black/55">Multiple selection</div>
           <div className="mt-2 text-xs text-black/55">
-            Use <span className="font-medium">Garden Design</span> in Tools to style the canvas (defaults),
-            or apply styles to the current selection.
+            Use <span className="font-medium">Tools</span> to style defaults, or apply styles to the current selection.
           </div>
         </div>
       </aside>
@@ -97,17 +208,12 @@ export default function Inspector(props: {
   const bed: StudioItem | null = sel.type === "bed" ? sel : null;
 
   const plants: PlantBlock[] = (bed?.meta as any)?.plants ?? [];
-  const zones: ZoneBlock[] = bed ? getZones(bed) : [];
+  const zones: ZoneRect[] = bed ? getZoneRects(bed) : [];
   const placingForThisBed = !!bed && props.pinPlacing?.bedId === bed.id;
 
-  function patchZones(next: ZoneBlock[]) {
+  function setBedZones(next: ZoneRect[]) {
     if (!bed) return;
-    props.onUpdateItem(bed.id, {
-      meta: {
-        ...(bed.meta as any),
-        zones: next,
-      } as any,
-    });
+    props.onUpdateMeta(bed.id, { zones: next as any });
   }
 
   return (
@@ -192,35 +298,78 @@ export default function Inspector(props: {
           </div>
         ) : null}
 
-        {/* NOTE: zones still exist in code; we’ll remove this section next when we delete zone concept */}
+        {/* Zones (v1 preset grid) */}
         {bed ? (
           <div className="rounded-2xl border border-black/10 bg-white p-4 shadow-sm">
-            <div className="flex items-center justify-between">
-              <div className="text-xs text-black/55">Zones (legacy)</div>
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <div className="text-xs text-black/55">Zones</div>
+                <div className="mt-1 text-xs text-black/45">
+                  Split this bed into zones so plantings can be assigned in Sheets.
+                </div>
+              </div>
+
               <button
                 type="button"
-                className="rounded-lg border border-black/10 bg-white px-3 py-2 text-xs shadow-sm hover:bg-black/5"
-                onClick={() => {
-                  patchZones([
-                    ...zones,
-                    { id: uid("zone"), name: "Zone", x: 0.2, y: 0.2, w: 0.3, h: 0.3 },
-                  ]);
-                }}
+                className="rounded-lg border border-black/10 bg-white px-2 py-1 text-xs hover:bg-black/5"
+                onClick={() => setBedZones([])}
+                title="Clear zones"
               >
-                + Add zone
+                Clear
               </button>
             </div>
-            <div className="mt-2 text-xs text-black/55">
-              We’ll replace zones with plant pins inside beds (data-driven). This stays temporarily.
+
+            <div className="mt-3 flex items-center gap-2">
+              {(() => {
+                const currentPreset = inferPresetFromZones(zones);
+
+                return (
+                  <>
+                    <select
+                      value={currentPreset}
+                      onChange={(e) => {
+                        const preset = e.target.value as ZonePreset;
+                        setBedZones(makeZones(preset));
+                      }}
+                      className="flex-1 rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
+                    >
+                      {ZONE_PRESETS.map((p) => (
+                        <option key={p.key} value={p.key}>
+                          {p.label}
+                        </option>
+                      ))}
+                    </select>
+
+                    <button
+                      type="button"
+                      className="rounded-xl border border-black/10 bg-white px-3 py-2 text-sm hover:bg-black/5"
+                      onClick={() => setBedZones(makeZones(inferPresetFromZones(zones)))}
+                      title="Regenerate zones"
+                    >
+                      Regenerate
+                    </button>
+                  </>
+                );
+              })()}
             </div>
+
+            {zones.length ? (
+              <div className="mt-3 text-xs text-black/55">
+                Codes: <span className="font-medium">{zones.map((z) => z.code).join(", ")}</span>
+              </div>
+            ) : (
+              <div className="mt-3 text-xs text-black/40">No zones yet. Pick a preset above.</div>
+            )}
           </div>
         ) : null}
 
-        {/* If you’re currently pinPlacing, you can keep that UI here later */}
+        {/* Pin placing (optional UI hook) */}
         {placingForThisBed ? (
           <div className="rounded-2xl border border-black/10 bg-white p-4 shadow-sm">
             <div className="text-xs text-black/55">Pin placing</div>
-            <div className="mt-2 text-xs text-black/55">Click inside the bed to drop a pin.</div>
+            <div className="mt-2 text-xs text-black/55">
+              Click inside the bed to drop a pin.
+            </div>
           </div>
         ) : null}
       </div>

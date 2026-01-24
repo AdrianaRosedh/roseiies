@@ -1,17 +1,24 @@
+// apps/studio/app/lib/server/tenant-auth.ts
+
 import { createServerSupabase } from "@roseiies/supabase/server";
 
 async function resolveTenantIdFromSlug(args: { supabase: any; slug: string }) {
   const { supabase, slug } = args;
 
-  const { data, error } = await supabase
-    .from("tenants")
-    .select("id")
-    .eq("slug", slug)
-    .limit(1)
-    .maybeSingle();
+  const candidates: Array<"id" | "primary_domain" | "name"> = ["id", "primary_domain", "name"];
 
-  if (error || !data?.id) return null;
-  return data.id as string;
+  for (const col of candidates) {
+    const { data, error } = await supabase
+      .from("tenants")
+      .select("id")
+      .eq(col, slug)
+      .limit(1)
+      .maybeSingle();
+
+    if (!error && data?.id) return data.id as string;
+  }
+
+  return null;
 }
 
 /**
@@ -39,7 +46,13 @@ export async function resolveTenantFromReq(req: Request) {
     return { tenantId: qTenant, host, mode: "query" as const };
   }
 
-  const isLocal = host === "localhost" || host === "127.0.0.1";
+  const isLocal =
+   host === "localhost" ||
+   host === "127.0.0.1" ||
+   host.endsWith(".localhost") ||
+   host.endsWith("-localhost") ||
+   host.includes("localhost");
+
   if (process.env.NODE_ENV === "development" && isLocal) {
     // 1) UUID fallback (preferred)
     const devTenantUuid = process.env.ROSEIIES_DEV_TENANT_ID;
@@ -47,7 +60,7 @@ export async function resolveTenantFromReq(req: Request) {
       return { tenantId: devTenantUuid, host, mode: "dev_env_uuid" as const };
     }
 
-    // 2) Slug fallback (you already have NEXT_PUBLIC_DEV_TENANT_ID=olivea)
+    // 2) Slug fallback
     const devTenantSlug = process.env.NEXT_PUBLIC_DEV_TENANT_ID;
     if (devTenantSlug) {
       const supabase = createServerSupabase();
@@ -62,7 +75,9 @@ export async function resolveTenantFromReq(req: Request) {
   }
 
   // Production path: tenant_domains lookup
-  if (!host) return { tenantId: null as string | null, host, mode: "none" as const };
+  if (!host) {
+    return { tenantId: null as string | null, host, mode: "none" as const };
+  }
 
   const supabase = createServerSupabase();
 
@@ -80,9 +95,19 @@ export async function resolveTenantFromReq(req: Request) {
   return { tenantId: data.tenant_id as string, host, mode: "domain" as const };
 }
 
+/**
+ * Studio write gate:
+ * - Prefer ROSEIIES_STUDIO_TOKEN (server-only)
+ * - Allow NEXT_PUBLIC_ROSEIIES_STUDIO_TOKEN as dev fallback (since client sends it)
+ */
 export function requireStudioToken(req: Request) {
   const token = req.headers.get("x-roseiies-studio-token");
-  if (!token || token !== process.env.ROSEIIES_STUDIO_TOKEN) {
+
+  const expected =
+    process.env.ROSEIIES_STUDIO_TOKEN ??
+    process.env.NEXT_PUBLIC_ROSEIIES_STUDIO_TOKEN;
+
+  if (!expected || !token || token !== expected) {
     return { ok: false as const };
   }
   return { ok: true as const };

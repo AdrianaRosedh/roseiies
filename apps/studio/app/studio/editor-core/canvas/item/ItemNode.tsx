@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Group, Text } from "react-konva";
+import { Group, Text, Rect } from "react-konva";
 import type Konva from "konva";
 import type { CornerRadii, CurvaturePath, PolygonPath, StudioItem } from "../../types";
 
@@ -62,6 +62,12 @@ function ItemNodeImpl(props: Props) {
 
   const isBed = props.item.type === "bed";
   const [hovered, setHovered] = useState(false);
+  const zones = isBed && Array.isArray(props.item.meta?.zones) ? props.item.meta.zones : null;
+
+  const showZones =
+    Boolean(zones?.length) &&
+    // always show when selected/hovered; also show when zoomed in a bit
+    (props.selected || hovered || props.stageScale > 0.85);
 
   // Draft geometry for edit modes (NO store writes during drag)
   const [draftCurv, setDraftCurv] = useState<CurvaturePath | null>(null);
@@ -249,6 +255,52 @@ function ItemNodeImpl(props: Props) {
         draftCurv={draftCurv}
         draftPoly={draftPoly}
       />
+       
+      {/* Bed zones overlay (visual only) */}
+      {showZones && zones ? (
+        <Group listening={false}>
+          {zones.map((z, idx) => {
+            const zx = (z.x ?? 0) * props.item.w;
+            const zy = (z.y ?? 0) * props.item.h;
+            const zw = (z.w ?? 0) * props.item.w;
+            const zh = (z.h ?? 0) * props.item.h;
+
+            const code = String((z as any).code ?? "").trim();
+            const label = code || (z as any).label || "";
+
+            // avoid noisy labels when zoomed out
+            const showLabel = Boolean(label) && (props.selected || hovered || props.stageScale > 1.0);
+
+            return (
+              <Group key={`${code || idx}`} listening={false}>
+                <Rect
+                  x={zx}
+                  y={zy}
+                  width={zw}
+                  height={zh}
+                  fillEnabled={false}
+                  stroke={"rgba(15,23,42,0.22)"}
+                  strokeWidth={1}
+                  dash={[6, 6]}
+                  cornerRadius={6}
+                  listening={false}
+                />
+                {showLabel ? (
+                  <Text
+                    x={zx + 6}
+                    y={zy + 4}
+                    text={label}
+                    fontSize={10}
+                    fill={"rgba(15,23,42,0.45)"}
+                    listening={false}
+                  />
+                ) : null}
+              </Group>
+            );
+          })}
+        </Group>
+      ) : null}
+
 
       {/* Label + code (subtle) */}
       {showLabel ? (

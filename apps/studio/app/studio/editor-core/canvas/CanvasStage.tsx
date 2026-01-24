@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Layer, Stage, Transformer, Line } from "react-konva";
+import { Layer, Stage, Transformer, Line, Circle, Text } from "react-konva";
 import type Konva from "konva";
 
 import type { LayoutDoc, StudioItem, StudioModule, ItemType } from "../types";
@@ -92,11 +92,58 @@ export default function CanvasStage(props: {
 
   treePlacing?: boolean;
   setTreePlacing?: (v: boolean) => void;
+    plantings?: Array<{
+    id: string;
+    bed_id: string | null;
+    zone_code: string | null;
+    crop: string | null;
+    status: string | null;
+    planted_at: string | null;
+    pin_x: number | null;
+    pin_y: number | null;
+  }>;
+
+
 }) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<Konva.Stage>(null);
   const trRef = useRef<Konva.Transformer>(null);
   const nodeMapRef = useRef<Map<string, Konva.Node>>(new Map());
+
+    const bedById = useMemo(() => {
+    const m = new Map<string, StudioItem>();
+    for (const it of props.doc.items) if (it.type === "bed") m.set(it.id, it);
+    return m;
+  }, [props.doc.items]);
+
+  function zoneCentroid(bed: StudioItem, zoneCode: string) {
+    const zones = bed.meta?.zones;
+    if (!Array.isArray(zones)) return null;
+    const z = zones.find((x: any) => String(x?.code ?? "").trim() === zoneCode);
+    if (!z) return null;
+
+    const cx = (Number(z.x ?? 0) + Number(z.w ?? 0) / 2) * bed.w;
+    const cy = (Number(z.y ?? 0) + Number(z.h ?? 0) / 2) * bed.h;
+    return { x: bed.x + cx, y: bed.y + cy };
+  }
+
+  function plantingPoint(p: any, bed: StudioItem) {
+    // 1) explicit pin override (normalized within bed)
+    if (p.pin_x != null && p.pin_y != null) {
+      return { x: bed.x + p.pin_x * bed.w, y: bed.y + p.pin_y * bed.h };
+    }
+
+    // 2) zone centroid
+    const code = String(p.zone_code ?? "").trim();
+    if (code) {
+      const zc = zoneCentroid(bed, code);
+      if (zc) return zc;
+    }
+
+    // 3) bed centroid
+    return { x: bed.x + bed.w / 2, y: bed.y + bed.h / 2 };
+  }
+
 
   const isCoarse = useIsCoarsePointer();
   const stageSize = useStageSize(wrapRef);
@@ -113,6 +160,11 @@ export default function CanvasStage(props: {
   useEffect(() => {
     if (editPlot) setShowPlotBoundary(true);
   }, [editPlot]);
+  
+  useEffect(() => {
+  console.log("[canvas] plantings", props.plantings?.length ?? 0);
+}, [props.plantings]);
+
 
   const plotW = draftCanvas?.w ?? props.doc.canvas.width;
   const plotH = draftCanvas?.h ?? props.doc.canvas.height;
@@ -507,6 +559,27 @@ export default function CanvasStage(props: {
           </Layer>
 
           <Layer>
+            {props.plantings?.length ? (
+              <Layer listening={false}>
+                {props.plantings.map((p) => {
+                  if (!p.bed_id) return null;
+                  const bed = bedById.get(p.bed_id);
+                  if (!bed) return null;
+                
+                  const pt = plantingPoint(p, bed);
+                  const label = String(p.crop ?? "").trim();
+                
+                  return (
+                    <React.Fragment key={p.id}>
+                      <Circle x={pt.x} y={pt.y} radius={6} />
+                      {label ? <Text x={pt.x + 8} y={pt.y - 7} text={label} fontSize={12} /> : null}
+                    </React.Fragment>
+                  );
+                })}
+              </Layer>
+            ) : null}
+
+
             {props.selectedIds.length > 1 ? (
               <Transformer
                 ref={trRef}

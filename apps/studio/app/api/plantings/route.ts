@@ -1,5 +1,7 @@
+// apps/studio/app/api/plantings/route.ts
+
 import { createServerSupabase } from "@roseiies/supabase/server";
-import { resolveTenantFromReq, requireStudioToken } from "@/app/lib/server/tenant-auth";
+import { resolveTenantFromReq, requireStudioToken } from "../../lib/server/tenant-auth";
 
 async function resolveGardenId(args: {
   supabase: any;
@@ -79,15 +81,12 @@ export async function GET(req: Request) {
     gardenName,
   });
 
-  if (!gardenId) {
-    return Response.json([]);
-  }
+  // No garden yet => empty list (Sheets can still operate)
+  if (!gardenId) return Response.json([]);
 
   const { data, error } = await supabase
     .from("garden_plantings")
-    .select(
-      "id, bed_id, zone_code, crop, status, planted_at, pin_x, pin_y, created_at"
-    )
+    .select("id, bed_id, zone_code, crop, status, planted_at, pin_x, pin_y, created_at")
     .eq("tenant_id", tenantId)
     .eq("garden_id", gardenId)
     .order("created_at", { ascending: false });
@@ -112,9 +111,14 @@ export async function POST(req: Request) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await req.json();
-  const gardenName = (body?.gardenName as string | undefined)?.trim();
+  let body: any = null;
+  try {
+    body = await req.json();
+  } catch {
+    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
 
+  const gardenName = (body?.gardenName as string | undefined)?.trim();
   if (!gardenName) {
     return Response.json({ error: "Missing gardenName" }, { status: 400 });
   }
@@ -172,7 +176,12 @@ export async function PATCH(req: Request) {
 
   if (!id) return Response.json({ error: "Missing id" }, { status: 400 });
 
-  const body = await req.json();
+  let body: any = null;
+  try {
+    body = await req.json();
+  } catch {
+    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
 
   const allowed = [
     "crop",
