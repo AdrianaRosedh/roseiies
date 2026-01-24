@@ -145,7 +145,10 @@ function GardenSheetsInner({
         rows={model.displayRows}
         bedsAndTrees={bedsAndTrees}
         zonesForBed={model.zonesForBed}
-        getActiveBedIdForRow={model.getActiveBedIdForRow} // ✅ required
+
+        // ✅ ADD THIS LINE
+        getActiveBedIdForRow={model.getActiveBedIdForRow}
+
         editing={model.editing}
         draft={model.draft}
         setDraft={model.setDraft}
@@ -156,7 +159,7 @@ function GardenSheetsInner({
         selectedRowId={model.selectedRowId}
         onRowClick={model.onRowClick}
         itemLabel={model.itemLabel}
-      />
+      /> 
     </div>
   );
 }

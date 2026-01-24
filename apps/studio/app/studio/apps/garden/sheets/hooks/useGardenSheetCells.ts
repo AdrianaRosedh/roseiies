@@ -2,8 +2,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { lsCellsKey } from "../storage";
 
-function lsCellsKey(tenantId: string, gardenName: string) {
+function oldV3CellsKey(tenantId: string, gardenName: string) {
   return `roseiies:garden:sheets:v3:cells:${tenantId}:${gardenName}`;
 }
 
@@ -14,8 +15,25 @@ export function useGardenSheetCells(args: { tenantId: string; gardenName: string
 
   useEffect(() => {
     if (!gardenName) return;
+
+    const newKey = lsCellsKey(tenantId, gardenName);
+    const v3Key = oldV3CellsKey(tenantId, gardenName);
+
     try {
-      const raw = localStorage.getItem(lsCellsKey(tenantId, gardenName));
+      // ✅ One-time migration (prefer whichever exists)
+      const rawNew = localStorage.getItem(newKey);
+      const rawV3 = localStorage.getItem(v3Key);
+
+      // If v3 exists and new doesn't, migrate v3 -> new
+      if (rawV3 && !rawNew) {
+        localStorage.setItem(newKey, rawV3);
+        localStorage.removeItem(v3Key);
+      }
+
+      // If new exists and v3 doesn't, optionally cleanup any stale v3 later
+      // (no-op)
+
+      const raw = localStorage.getItem(newKey);
       if (raw) setCells(JSON.parse(raw) ?? {});
       else setCells({});
     } catch {
@@ -25,6 +43,7 @@ export function useGardenSheetCells(args: { tenantId: string; gardenName: string
 
   useEffect(() => {
     if (!gardenName) return;
+
     try {
       localStorage.setItem(lsCellsKey(tenantId, gardenName), JSON.stringify(cells));
     } catch {}

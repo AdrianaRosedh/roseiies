@@ -48,19 +48,22 @@ export function usePlantings(args: { gardenName: string | null; tenantId: string
   const create = useCallback(
     async (draft: Omit<PlantingRow, "id">) => {
       if (!gardenName) {
-        const msg = "Missing gardenName";
-        setLastError(msg);
-        throw new Error(msg);
+        setLastError("Missing gardenName");
+        // fallback local create
+        const local: PlantingRow = { id: `local_${Date.now()}`, ...draft } as any;
+        setRows((prev) => [local, ...prev]);
+        return local;
       }
 
       const token = getStudioToken();
-      if (!token) {
-        const msg = "Missing NEXT_PUBLIC_ROSEIIES_STUDIO_TOKEN";
-        setLastError(msg);
-        throw new Error(msg);
-      }
 
-      setLastError(null);
+      // ✅ Local-only mode if token missing
+      if (!token) {
+        setLastError("Studio token missing — saved locally (not synced)");
+        const local: PlantingRow = { id: `local_${Date.now()}`, ...draft } as any;
+        setRows((prev) => [local, ...prev]);
+        return local;
+      }
 
       const payload = { gardenName, ...draft };
 
@@ -79,27 +82,30 @@ export function usePlantings(args: { gardenName: string | null; tenantId: string
       if (!res.ok) {
         const msg = typeof json?.error === "string" ? json.error : text || `HTTP ${res.status}`;
         setLastError(msg);
-        throw new Error(msg);
+        // fallback local create so user can keep working
+        const local: PlantingRow = { id: `local_${Date.now()}`, ...draft } as any;
+        setRows((prev) => [local, ...prev]);
+        return local;
       }
 
-      // ✅ Do not mutate rows here. Model handles optimistic + replacement.
-      return json as PlantingRow;
+      const created = json as PlantingRow;
+      setRows((prev) => [created, ...prev]);
+      return created;
     },
     [gardenName]
   );
 
   const patch = useCallback(async (id: string, patchObj: Partial<PlantingRow>) => {
-    const token = getStudioToken();
-    if (!token) {
-      const msg = "Missing NEXT_PUBLIC_ROSEIIES_STUDIO_TOKEN";
-      setLastError(msg);
-      throw new Error(msg);
-    }
-
-    setLastError(null);
-
-    // optimistic update
+    // optimistic update always
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patchObj } : r)));
+
+    const token = getStudioToken();
+
+    // ✅ Local-only mode if token missing
+    if (!token) {
+      setLastError("Studio token missing — changes saved locally (not synced)");
+      return;
+    }
 
     const res = await fetch(`/api/plantings?id=${encodeURIComponent(id)}`, {
       method: "PATCH",
@@ -112,9 +118,8 @@ export function usePlantings(args: { gardenName: string | null; tenantId: string
 
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      const msg = text || `PATCH /api/plantings failed (${res.status})`;
-      setLastError(msg);
-      console.error(msg);
+      console.error("PATCH /api/plantings failed:", res.status, text);
+      setLastError(text || `PATCH failed (HTTP ${res.status})`);
     }
   }, []);
 

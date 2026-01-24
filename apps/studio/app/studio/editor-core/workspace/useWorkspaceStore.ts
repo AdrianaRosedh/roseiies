@@ -174,6 +174,15 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
 
   // keyboard shortcuts (extract later)
   useEffect(() => {
+    function isEditableTarget(t: EventTarget | null) {
+      const el = t as HTMLElement | null;
+      if (!el) return false;
+      const tag = el.tagName?.toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select") return true;
+      if ((el as any).isContentEditable) return true;
+      return false;
+    }
+    
     function onKeyDown(e: KeyboardEvent) {
       if (isEditableTarget(e.target)) return;
       if (e.defaultPrevented) return;
