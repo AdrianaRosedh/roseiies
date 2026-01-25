@@ -22,9 +22,21 @@ function isValidBedOrTreeId(bedsAndTrees: any[], id: any): id is string {
   return bedsAndTrees.some((it) => it?.id === id);
 }
 
+// ✅ Only validate zone codes if bed has zones; otherwise keep whatever user typed
+function normalizeZoneAgainstAllowed(z: string | null, allowed: string[]) {
+  if (!z) return null;
+  const code = z.trim();
+  if (!code) return null;
+  if (allowed.length === 0) return code; // keep free-form until zones exist
+  return allowed.includes(code) ? code : null;
+}
+
 export function useGardenSheetsModel(args: {
   store: any;
-  gardenName: string | null;
+
+  // stable identity for this sheet view (legacy internal id)
+  gardenId: string | null;
+
   rows: PlantingRow[];
   setRows: (fn: (prev: PlantingRow[]) => PlantingRow[]) => void;
   cols: Column[];
@@ -94,7 +106,6 @@ export function useGardenSheetsModel(args: {
     [cell, draftRow]
   );
 
-  // ✅ Prevent “blank map”: never focus/center an invalid id
   const focusMapForRow = useCallback(
     (row: PlantingRow) => {
       const id = row.bed_id;
@@ -142,7 +153,6 @@ export function useGardenSheetsModel(args: {
           ...(isCoreKey(colKey) ? ({ [colKey]: coerced } as any) : {}),
         };
 
-        // ✅ enforce required fields BEFORE create
         const cropValue = normalizeStringOrNull(nextDraft.crop);
         const bedValue = normalizeStringOrNull(nextDraft.bed_id);
 
@@ -152,19 +162,17 @@ export function useGardenSheetsModel(args: {
         nextDraft.crop = cropValue;
         nextDraft.bed_id = bedValue;
 
-        // ✅ validate zone if present
-        if (nextDraft.zone_code) {
-          const z = normalizeStringOrNull(nextDraft.zone_code);
-          const allowed = zonesForBed(bedValue);
-          nextDraft.zone_code = z && allowed.includes(z) ? z : null;
-        }
+        const allowed = zonesForBed(bedValue);
+        nextDraft.zone_code = normalizeZoneAgainstAllowed(
+          normalizeStringOrNull(nextDraft.zone_code),
+          allowed
+        );
 
         const tempId = `tmp_${Math.random().toString(16).slice(2)}_${Date.now()}`;
         setRows((prev) => [{ id: tempId, ...nextDraft }, ...prev]);
 
         const customFromNew = cell.getRow("__new__");
 
-        // clear draft immediately
         setDraftRow(emptyDraftRow());
         cell.delRow("__new__");
 
@@ -182,7 +190,6 @@ export function useGardenSheetsModel(args: {
           console.error("Create planting failed:", e);
           setRows((prev) => prev.filter((r) => r.id !== tempId));
 
-          // restore draft
           setDraftRow(nextDraft);
           if (customFromNew && Object.keys(customFromNew).length) {
             cell.setRow("__new__", customFromNew);
@@ -203,27 +210,27 @@ export function useGardenSheetsModel(args: {
         const coerced = normalizeValue(raw);
 
         if (colKey === "crop") patchObj.crop = normalizeStringOrNull(coerced);
-
         if (colKey === "status") patchObj.status = normalizeStringOrNull(coerced);
-
         if (colKey === "planted_at") patchObj.planted_at = normalizeStringOrNull(coerced);
 
         if (colKey === "bed_id") {
           const next = normalizeStringOrNull(coerced);
           patchObj.bed_id = next && isValidBedOrTreeId(bedsAndTrees, next) ? next : null;
 
-          // if bed changes, zone must still be valid
+          // if bed changes, re-normalize zone against the new bed’s zones
           const allowed = zonesForBed(patchObj.bed_id ?? null);
-          if (row.zone_code && !allowed.includes(row.zone_code)) {
-            patchObj.zone_code = null;
-          }
+          patchObj.zone_code = normalizeZoneAgainstAllowed(
+            normalizeStringOrNull(row.zone_code),
+            allowed
+          );
         }
 
         if (colKey === "zone_code") {
           const z = normalizeStringOrNull(coerced);
-          const bedId = row.bed_id && isValidBedOrTreeId(bedsAndTrees, row.bed_id) ? row.bed_id : null;
+          const bedId =
+            row.bed_id && isValidBedOrTreeId(bedsAndTrees, row.bed_id) ? row.bed_id : null;
           const allowed = zonesForBed(bedId);
-          patchObj.zone_code = z && allowed.includes(z) ? z : null;
+          patchObj.zone_code = normalizeZoneAgainstAllowed(z, allowed);
         }
 
         if (colKey === "pin_x" || colKey === "pin_y") {
@@ -238,11 +245,9 @@ export function useGardenSheetsModel(args: {
 
         const merged = { ...row, ...patchObj } as PlantingRow;
 
-        // ✅ only focus map when valid
         focusMapForRow(merged);
         setSelectedRowId(rowId);
       } else {
-        // custom field: local only
         const raw = coerceByType(col, value);
         const coerced = normalizeValue(raw);
         cell.set(rowId, colKey, coerced);

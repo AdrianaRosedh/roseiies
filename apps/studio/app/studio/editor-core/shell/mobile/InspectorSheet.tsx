@@ -1,8 +1,9 @@
+// apps/studio/app/studio/editor-core/shell/mobile/InspectorSheet.tsx
 "use client";
 
 import MobileSheet from "../../MobileSheet";
 import Inspector from "../../Inspector";
-import type { StudioModule, PlantBlock } from "../../types";
+import type { StudioModule } from "../../types";
 
 export default function InspectorSheet(props: {
   open: boolean;
@@ -11,13 +12,6 @@ export default function InspectorSheet(props: {
   module: StudioModule;
   store: any;
 }) {
-  // Inspector expects these signatures; store already matches them.
-  const onAddPlant = (bedId: string) => props.store?.addPlantToBed?.(bedId);
-  const onUpdatePlant = (bedId: string, plantId: string, patch: Partial<PlantBlock>) =>
-    props.store?.updatePlant?.(bedId, plantId, patch);
-  const onRemovePlant = (bedId: string, plantId: string) =>
-    props.store?.removePlant?.(bedId, plantId);
-
   return (
     <MobileSheet
       open={props.open}
@@ -34,9 +28,7 @@ export default function InspectorSheet(props: {
           onUpdateItem={props.store.updateItem}
           onUpdateMeta={props.store.updateMeta}
           onUpdateStyle={props.store.updateStyle}
-          onAddPlant={onAddPlant}
-          onUpdatePlant={onUpdatePlant}
-          onRemovePlant={onRemovePlant}
+          plantings={props.store.plantings ?? undefined}
         />
       </div>
     </MobileSheet>

@@ -5,7 +5,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { LayoutDoc, StudioModule, StudioItem } from "../types";
 import type { PortalContext } from "../../../lib/portal/getPortalContext";
 
-// ✅ Realtime client
 import { createBrowserSupabase } from "@roseiies/supabase/browser";
 
 import TopBar from "../TopBar";
@@ -19,7 +18,6 @@ import PanelHeader from "./desktop/PanelHeader";
 import CollapsedRail from "./desktop/CollapsedRail";
 
 export type MobileSheetKind = "context" | "tools" | "inspector" | "more" | null;
-
 type AlignTo = "selection" | "plot";
 
 type PlantingRow = {
@@ -32,7 +30,7 @@ type PlantingRow = {
   pin_x: number | null;
   pin_y: number | null;
 
-  // now included by API (safe optional)
+  // legacy optional fields (safe)
   garden_id?: string | null;
   created_at?: string | null;
 };
@@ -63,20 +61,13 @@ function sanitizePlantingsForDoc(doc: LayoutDoc, plantings: PlantingRow[]) {
     .map((p) => {
       const bedId = p.bed_id as string;
       const allowed = zonesForBed(bedId);
-
       const z = p.zone_code ? String(p.zone_code).trim() : null;
-      const zone_code = z && allowed.includes(z) ? z : null;
+
+      // ✅ If bed defines zones, validate. If not, keep zone_code.
+      const zone_code = allowed.length === 0 ? z : z && allowed.includes(z) ? z : null;
 
       return { ...p, zone_code };
     });
-}
-
-function upsertById(prev: PlantingRow[], row: PlantingRow) {
-  const idx = prev.findIndex((r) => r.id === row.id);
-  if (idx === -1) return [row, ...prev];
-  const next = [...prev];
-  next[idx] = { ...next[idx], ...row };
-  return next;
 }
 
 export default function StudioShell(props: {
@@ -107,7 +98,7 @@ export default function StudioShell(props: {
     };
   }, []);
 
-  // ✅ Safety: clear selection when layout changes
+  // clear selection when layout changes
   useEffect(() => {
     try {
       store?.setSelectedIds?.([]);
@@ -195,7 +186,7 @@ export default function StudioShell(props: {
     store.updateItemsBatch?.(patches);
   }
 
-  // snap helper for programmatic ops (do NOT snap trees)
+  // snap helper (do NOT snap trees)
   function snapPatch(id: string, patch: any) {
     const it = (doc.items ?? []).find((x: any) => x.id === id);
     const isTree = it?.type === "tree";
@@ -214,12 +205,16 @@ export default function StudioShell(props: {
 
   function bringForward() {
     if (!selectedItems.length) return;
-    store.updateItemsBatch?.(selectedItems.map((it: any) => ({ id: it.id, patch: { order: (it.order ?? 0) + 1 } })));
+    store.updateItemsBatch?.(
+      selectedItems.map((it: any) => ({ id: it.id, patch: { order: (it.order ?? 0) + 1 } }))
+    );
   }
 
   function sendBackward() {
     if (!selectedItems.length) return;
-    store.updateItemsBatch?.(selectedItems.map((it: any) => ({ id: it.id, patch: { order: (it.order ?? 0) - 1 } })));
+    store.updateItemsBatch?.(
+      selectedItems.map((it: any) => ({ id: it.id, patch: { order: (it.order ?? 0) - 1 } }))
+    );
   }
 
   function bringToFront() {
@@ -228,7 +223,9 @@ export default function StudioShell(props: {
     const maxOrder = (doc.items ?? []).reduce((m: number, it: any) => Math.max(m, it.order ?? 0), 0);
     const sorted = [...selectedItems].sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0));
 
-    store.updateItemsBatch?.(sorted.map((it: any, idx: number) => ({ id: it.id, patch: { order: maxOrder + 1 + idx } })));
+    store.updateItemsBatch?.(
+      sorted.map((it: any, idx: number) => ({ id: it.id, patch: { order: maxOrder + 1 + idx } }))
+    );
   }
 
   function sendToBack() {
@@ -347,148 +344,112 @@ export default function StudioShell(props: {
   }
 
   // ---------------------------------------------------------------------------
-  // ✅ Plantings: fast incremental realtime (no full refresh per change)
+  // ✅ Plantings (Roseiies): read from roseiies.plantings via layout context
   // ---------------------------------------------------------------------------
   const [plantingsRaw, setPlantingsRaw] = useState<PlantingRow[]>([]);
-  const activeGardenId = activeGarden?.id ?? null;
-  const activeGardenName = activeGarden?.name ?? null;
-
   const inFlightRef = useRef<AbortController | null>(null);
 
-  async function refreshPlantings(gardenName: string | null) {
-    if (!gardenName) {
-      setPlantingsRaw([]);
-      return;
-    }
+  // DB Area name is physical area. For now it is always "Garden".
+  const areaName = "Garden";
 
+  // cache context in-memory
+  const ctxRef = useRef<{ key: string; ctx: any } | null>(null);
+
+  async function getGardenCtx() {
+    const cached = ctxRef.current;
+    if (cached && cached.key === areaName) return cached.ctx;
+
+    const res = await fetch(
+      `/api/garden-context?workplaceSlug=olivea&areaName=${encodeURIComponent(areaName)}`
+    );
+    const text = await res.text();
+    const json = text ? JSON.parse(text) : null;
+    if (!res.ok) throw new Error(json?.error ?? text ?? `garden-context failed (${res.status})`);
+
+    ctxRef.current = { key: areaName, ctx: json };
+    return json;
+  }
+
+  async function refreshPlantingsRoseiies() {
     try {
+      const ctx = await getGardenCtx();
+
       // cancel old request
       if (inFlightRef.current) inFlightRef.current.abort();
       const ac = new AbortController();
       inFlightRef.current = ac;
 
-      const res = await fetch(`/api/plantings?gardenName=${encodeURIComponent(gardenName)}`, { signal: ac.signal });
+      const res = await fetch(`/api/plantings?layoutId=${encodeURIComponent(ctx.layoutId)}`, {
+        signal: ac.signal,
+      });
       const text = await res.text();
-
-      let json: any = null;
-      try {
-        json = text ? JSON.parse(text) : null;
-      } catch {
-        return;
-      }
+      const json = text ? JSON.parse(text) : null;
 
       if (!res.ok) return;
 
-      const raw = Array.isArray(json) ? (json as PlantingRow[]) : [];
-      setPlantingsRaw(raw);
+      const rows = (Array.isArray(json?.rows) ? json.rows : []) as PlantingRow[];
+      setPlantingsRaw(rows);
     } catch {
       // ignore in designer
     }
   }
 
-  // initial fetch / garden switch
+  // initial fetch / layout switch
   useEffect(() => {
-    refreshPlantings(activeGardenName);
+    refreshPlantingsRoseiies();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeGardenName, portal.tenantId]);
+  }, [store?.state?.activeLayoutId, portal.tenantId]);
 
-  // realtime subscription (tenant-scoped, incremental updates)
+  // realtime subscription: roseiies.plantings
   useEffect(() => {
     if (!portal.tenantId) return;
 
     const supabase = createBrowserSupabase();
+    let channel: any = null;
+    let alive = true;
 
-    const channel = supabase
-      .channel(`garden_plantings:${portal.tenantId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "garden_plantings",
-          filter: `tenant_id=eq.${portal.tenantId}`,
-        },
-        (payload: any) => {
-          const evt = String(payload?.eventType ?? "").toUpperCase();
+    let t: any = null;
+    const scheduleRefresh = () => {
+      if (t) clearTimeout(t);
+      t = setTimeout(() => refreshPlantingsRoseiies(), 140);
+    };
 
-          const next = payload?.new as any;
-          const prev = payload?.old as any;
+    (async () => {
+      try {
+        const ctx = await getGardenCtx();
+        if (!alive) return;
 
-          // if we don't know active garden id, safest is to refresh (rare)
-          if (!activeGardenId) {
-            // light debounce: schedule microtask
-            queueMicrotask(() => refreshPlantings(activeGardenName));
-            return;
-          }
-
-          const newGarden = next?.garden_id ?? null;
-          const oldGarden = prev?.garden_id ?? null;
-
-          // if change doesn't touch this garden, ignore
-          const touchesActive =
-            newGarden === activeGardenId || oldGarden === activeGardenId;
-
-          if (!touchesActive) return;
-
-          // apply incrementally
-          setPlantingsRaw((prevRows) => {
-            // if row moved out of this garden
-            if (evt === "UPDATE" && oldGarden === activeGardenId && newGarden !== activeGardenId) {
-              return prevRows.filter((r) => r.id !== String(next?.id ?? prev?.id));
-            }
-
-            if (evt === "DELETE") {
-              const id = String(prev?.id ?? "");
-              return prevRows.filter((r) => r.id !== id);
-            }
-
-            if (evt === "INSERT") {
-              const row: PlantingRow = {
-                id: String(next?.id),
-                bed_id: next?.bed_id ?? null,
-                zone_code: next?.zone_code ?? null,
-                crop: next?.crop ?? null,
-                status: next?.status ?? null,
-                planted_at: next?.planted_at ?? null,
-                pin_x: next?.pin_x ?? null,
-                pin_y: next?.pin_y ?? null,
-                garden_id: next?.garden_id ?? null,
-                created_at: next?.created_at ?? null,
-              };
-              return upsertById(prevRows, row);
-            }
-
-            if (evt === "UPDATE") {
-              const row: PlantingRow = {
-                id: String(next?.id),
-                bed_id: next?.bed_id ?? null,
-                zone_code: next?.zone_code ?? null,
-                crop: next?.crop ?? null,
-                status: next?.status ?? null,
-                planted_at: next?.planted_at ?? null,
-                pin_x: next?.pin_x ?? null,
-                pin_y: next?.pin_y ?? null,
-                garden_id: next?.garden_id ?? null,
-                created_at: next?.created_at ?? null,
-              };
-              return upsertById(prevRows, row);
-            }
-
-            // unknown: fallback to existing list
-            return prevRows;
-          });
-        }
-      )
-      .subscribe();
+        channel = supabase
+          .channel(`roseiies:plantings:${portal.tenantId}:${ctx.workplaceId}:${areaName}`)
+          .on(
+            "postgres_changes",
+            {
+              event: "*",
+              schema: "roseiies",
+              table: "plantings",
+              filter: `workplace_id=eq.${ctx.workplaceId}`,
+            },
+            () => scheduleRefresh()
+          )
+          .subscribe();
+      } catch {
+        // ignore
+      }
+    })();
 
     return () => {
-      supabase.removeChannel(channel);
+      alive = false;
+      if (t) clearTimeout(t);
+      if (channel) supabase.removeChannel(channel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [portal.tenantId, activeGardenId, activeGardenName]);
+  }, [portal.tenantId]);
 
-  // sanitize to prevent Konva crashes from invalid bed_id/zone_code (and keep Canvas fast)
-  const plantings = useMemo(() => sanitizePlantingsForDoc(doc, plantingsRaw), [doc, plantingsRaw]);
+  // sanitize for Canvas + Inspector
+  const plantings = useMemo(
+    () => sanitizePlantingsForDoc(doc, plantingsRaw),
+    [doc, plantingsRaw]
+  );
 
   // CanvasStage props
   const canvasProps = {
@@ -512,7 +473,6 @@ export default function StudioShell(props: {
     onPasteAtCursor: store.pasteAtCursor,
     onDeleteSelected: store.deleteSelected,
 
-    // Undo / Redo
     onUndo: store.undo,
     onRedo: store.redo,
 
@@ -521,13 +481,12 @@ export default function StudioShell(props: {
     snapStep: SNAP_STEP,
     cursorWorld: store.cursorWorld,
 
-    // lets CanvasStage refresh transformer/toolbar after batch ops
     selectionVersion: store.selectionVersion,
 
     treePlacing,
     setTreePlacing,
 
-    // ✅ read-only plantings feed for pins (sanitized)
+    // ✅ read-only plantings feed for pins + Inspector
     plantings,
   };
 

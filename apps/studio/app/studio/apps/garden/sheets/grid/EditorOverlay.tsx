@@ -5,6 +5,22 @@ import React, { useEffect, useMemo, useRef } from "react";
 import type { Column, PlantingRow } from "../types";
 import type { GridStore } from "./store";
 
+function normalizeValue(v: any) {
+  if (v == null) return "";
+  if (v === "null") return "";
+  return v;
+}
+
+function labelForItem(it: any) {
+  const base =
+    (typeof it?.label === "string" && it.label.trim() !== "")
+      ? it.label.trim()
+      : (it?.id ? String(it.id) : (it?.type === "tree" ? "Tree" : "Bed"));
+
+  const code = it?.meta?.code ? ` (${String(it.meta.code).trim()})` : "";
+  return `${base}${code}`.trim();
+}
+
 export default function EditorOverlay(props: {
   store: GridStore;
   cols: Column[];
@@ -20,7 +36,15 @@ export default function EditorOverlay(props: {
   }) => Promise<void>;
   getRowById: (rowId: string) => PlantingRow | null;
 }) {
-  const { store, cols, bedsAndTrees, zonesForBed, getActiveBedIdForRow, commit, getRowById } = props;
+  const {
+    store,
+    cols,
+    bedsAndTrees,
+    zonesForBed,
+    getActiveBedIdForRow,
+    commit,
+    getRowById,
+  } = props;
 
   const ed = store.getState().editing;
   const inputRef = useRef<HTMLInputElement | HTMLSelectElement | null>(null);
@@ -60,7 +84,8 @@ export default function EditorOverlay(props: {
   const commonProps = {
     onMouseDown: (e: React.MouseEvent) => e.stopPropagation(),
     onClick: (e: React.MouseEvent) => e.stopPropagation(),
-    className: "w-full h-full rounded-md border border-black/10 bg-white px-2 py-1 text-sm outline-none",
+    className:
+      "w-full h-full rounded-md border border-black/10 bg-white px-2 py-1 text-sm outline-none",
   } as const;
 
   async function commitAndMove(move?: "down" | "right" | "left") {
@@ -82,24 +107,39 @@ export default function EditorOverlay(props: {
     inputRef.current = n;
   };
 
-  const safeValue = ed.value == null || ed.value === "null" ? "" : String(ed.value);
+  const safeValue = String(normalizeValue(ed.value) ?? "");
 
-  // Bed/Tree select
+  // ---------------------------------------------------------
+  // ✅ Bed/Tree select (STRICT: stores it.id)
+  // ---------------------------------------------------------
   if (col.type === "select" && String(col.key) === "bed_id") {
     return (
       <div style={style}>
         <select
           ref={setSelectRef}
           value={safeValue}
-          onChange={(e) => store.updateDraft(e.target.value)}
+          onChange={(e) => store.updateDraft(e.target.value)} // ✅ saves id, not label
           onBlur={() => void commitAndMove()}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              void commitAndMove("down");
+            }
+            if (e.key === "Tab") {
+              e.preventDefault();
+              void commitAndMove(e.shiftKey ? "left" : "right");
+            }
+            if (e.key === "Escape") {
+              e.preventDefault();
+              store.endEdit();
+            }
+          }}
           {...commonProps}
         >
           <option value="">—</option>
           {bedsAndTrees.map((it: any) => (
             <option key={it.id} value={it.id}>
-              {it.label ?? (it.type === "tree" ? "Tree" : "Bed")}
-              {it?.meta?.code ? ` (${it.meta.code})` : ""}
+              {labelForItem(it)}
             </option>
           ))}
         </select>
@@ -107,19 +147,39 @@ export default function EditorOverlay(props: {
     );
   }
 
-  // Zone select depends on bed_id
+  // ---------------------------------------------------------
+  // ✅ Zone select depends on bed_id (STRICT: only valid zones)
+  // ---------------------------------------------------------
   if (col.type === "select" && String(col.key) === "zone_code") {
     const bedId = getActiveBedIdForRow(ed.cell.rowId, row);
     const zones = zonesForBed(bedId);
+
+    const disabled = !bedId || zones.length === 0;
 
     return (
       <div style={style}>
         <select
           ref={setSelectRef}
-          value={safeValue}
+          disabled={disabled}
+          value={disabled ? "" : safeValue}
           onChange={(e) => store.updateDraft(e.target.value)}
           onBlur={() => void commitAndMove()}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              void commitAndMove("down");
+            }
+            if (e.key === "Tab") {
+              e.preventDefault();
+              void commitAndMove(e.shiftKey ? "left" : "right");
+            }
+            if (e.key === "Escape") {
+              e.preventDefault();
+              store.endEdit();
+            }
+          }}
           {...commonProps}
+          className={`${commonProps.className} ${disabled ? "opacity-50" : ""}`}
         >
           <option value="">—</option>
           {zones.map((z) => (
@@ -132,7 +192,9 @@ export default function EditorOverlay(props: {
     );
   }
 
+  // ---------------------------------------------------------
   // Generic select
+  // ---------------------------------------------------------
   if (col.type === "select") {
     const opts = col.options?.values ?? [];
     return (
@@ -142,12 +204,26 @@ export default function EditorOverlay(props: {
           value={safeValue}
           onChange={(e) => store.updateDraft(e.target.value)}
           onBlur={() => void commitAndMove()}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              void commitAndMove("down");
+            }
+            if (e.key === "Tab") {
+              e.preventDefault();
+              void commitAndMove(e.shiftKey ? "left" : "right");
+            }
+            if (e.key === "Escape") {
+              e.preventDefault();
+              store.endEdit();
+            }
+          }}
           {...commonProps}
         >
           <option value="">—</option>
           {opts.map((v) => (
-            <option key={v} value={v}>
-              {v}
+            <option key={String(v)} value={String(v)}>
+              {String(v)}
             </option>
           ))}
         </select>
@@ -155,6 +231,9 @@ export default function EditorOverlay(props: {
     );
   }
 
+  // ---------------------------------------------------------
+  // Date
+  // ---------------------------------------------------------
   if (col.type === "date") {
     return (
       <div style={style}>
@@ -164,12 +243,29 @@ export default function EditorOverlay(props: {
           value={safeValue}
           onChange={(e) => store.updateDraft(e.target.value)}
           onBlur={() => void commitAndMove()}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              void commitAndMove("down");
+            }
+            if (e.key === "Tab") {
+              e.preventDefault();
+              void commitAndMove(e.shiftKey ? "left" : "right");
+            }
+            if (e.key === "Escape") {
+              e.preventDefault();
+              store.endEdit();
+            }
+          }}
           {...commonProps}
         />
       </div>
     );
   }
 
+  // ---------------------------------------------------------
+  // Checkbox
+  // ---------------------------------------------------------
   if (col.type === "checkbox") {
     return (
       <div style={style} className="flex items-center justify-center">
@@ -190,14 +286,16 @@ export default function EditorOverlay(props: {
     );
   }
 
+  // ---------------------------------------------------------
   // Text / number
+  // ---------------------------------------------------------
   const inputType = col.type === "number" ? "number" : "text";
   return (
     <div style={style}>
       <input
         ref={setInputRef}
         type={inputType}
-        value={ed.value == null || ed.value === "null" ? "" : String(ed.value)}
+        value={safeValue}
         onChange={(e) => store.updateDraft(e.target.value)}
         onBlur={() => void commitAndMove()}
         onKeyDown={(e) => {

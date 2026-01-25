@@ -9,7 +9,7 @@ import type { StudioItem, StudioModule } from "./types";
 --------------------------------------------- */
 type PlantingRow = {
   id: string;
-  bed_id: string | null; // bed OR tree item id
+  bed_id: string | null; // bed OR tree item id (canvas id)
   zone_code: string | null;
   crop: string | null;
   status: string | null;
@@ -128,9 +128,6 @@ function Chip(props: { children: React.ReactNode }) {
   );
 }
 
-/* ---------------------------------------------
-  Apple/Google-style compact toggle
---------------------------------------------- */
 function Switch(props: { checked: boolean; onChange: (v: boolean) => void }) {
   return (
     <button
@@ -152,10 +149,6 @@ function Switch(props: { checked: boolean; onChange: (v: boolean) => void }) {
   );
 }
 
-/* ---------------------------------------------
-  Compact section
-  ✅ FIXED: no nested <button> issues
---------------------------------------------- */
 function Section(props: {
   title: string;
   right?: React.ReactNode;
@@ -166,9 +159,7 @@ function Section(props: {
 
   return (
     <div className="rounded-xl border border-black/10 bg-white/70">
-      {/* Header row */}
       <div className="w-full px-3 py-2 flex items-center gap-2">
-        {/* Toggle button (ONLY this is a button) */}
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
@@ -178,7 +169,6 @@ function Section(props: {
           <span className={`text-black/35 transition-transform ${open ? "rotate-90" : ""}`}>›</span>
         </button>
 
-        {/* Right actions are siblings (can be buttons safely) */}
         {props.right ? (
           <div
             className="flex items-center gap-2 shrink-0"
@@ -203,6 +193,15 @@ function Section(props: {
   );
 }
 
+async function copyToClipboard(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /* ---------------------------------------------
   Component
 --------------------------------------------- */
@@ -220,7 +219,6 @@ export default function Inspector(props: {
   plantings?: PlantingRow[];
 }) {
   const isMulti = props.selectedIds.length > 1;
-
   const PANEL_CLASS = "h-full border-l border-black/10 bg-white/60 flex flex-col overflow-hidden";
 
   if (props.selectedIds.length === 0) {
@@ -271,7 +269,17 @@ export default function Inspector(props: {
 
   const code = (sel.meta as any)?.code ? String((sel.meta as any).code) : null;
 
+  // ✅ Only plantings where bed_id matches selected canvas item id
   const plantings = (props.plantings ?? []).filter((p) => p.bed_id === selId);
+
+  // For best-practice debugging: show “recent bed_id” values if none match
+  const recentBedIds = useMemo(() => {
+    const all = props.plantings ?? [];
+    const ids = all
+      .map((p) => String(p.bed_id ?? "").trim())
+      .filter(Boolean);
+    return Array.from(new Set(ids)).slice(0, 8);
+  }, [props.plantings]);
 
   const byZone = useMemo(() => {
     const m = new Map<string, PlantingRow[]>();
@@ -315,6 +323,12 @@ export default function Inspector(props: {
         <div className="mt-1 flex items-center justify-between gap-2">
           <div className="min-w-0">
             <div className="text-[12px] text-black/75 truncate">{headerLabel}</div>
+
+            {/* ✅ Best practice: always show selected canvas id */}
+            <div className="mt-0.5 text-[11px] text-black/40 truncate">
+              id: <span className="font-mono">{selId}</span>
+            </div>
+
             <div className="mt-1 flex flex-wrap gap-1.5">
               <Chip>{niceType(sel.type)}</Chip>
               {code ? <Chip>Code {code}</Chip> : null}
@@ -427,7 +441,46 @@ export default function Inspector(props: {
             right={<span className="text-[11px] text-black/45">{plantings.length}</span>}
           >
             {plantings.length === 0 ? (
-              <div className="text-[12px] text-black/55">No plantings assigned yet.</div>
+              <div className="space-y-2">
+                <div className="text-[12px] text-black/55">No plantings assigned yet.</div>
+
+                {/* ✅ Best-practice guidance */}
+                <div className="text-[11px] text-black/45 leading-snug">
+                  To attach a Sheets row to this bed, the row’s <span className="font-medium">Bed / Tree</span> value must equal this bed’s{" "}
+                  <span className="font-mono">id</span>.
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    className="rounded-md border border-black/10 bg-white px-2 py-1 text-[11px] text-black/60 hover:bg-black/5"
+                    onClick={async () => {
+                      await copyToClipboard(selId);
+                    }}
+                  >
+                    Copy bed id
+                  </button>
+
+                  <div className="text-[11px] text-black/45 truncate">
+                    <span className="font-mono">{selId}</span>
+                  </div>
+                </div>
+
+                {recentBedIds.length > 0 ? (
+                  <div className="mt-2 rounded-lg border border-black/10 bg-white p-2">
+                    <div className="text-[10px] font-semibold text-black/55 mb-1">
+                      Recent planting bed_id values (for debugging)
+                    </div>
+                    <div className="space-y-1">
+                      {recentBedIds.map((id) => (
+                        <div key={id} className="text-[10px] text-black/45 font-mono truncate">
+                          {id}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
             ) : (
               <div className="space-y-2">
                 {zoneKeysSorted.map((zone) => {

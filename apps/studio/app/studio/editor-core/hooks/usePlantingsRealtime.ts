@@ -7,8 +7,8 @@ import { createBrowserSupabase } from "@roseiies/supabase/browser";
 
 export type PlantingRow = {
   id: string;
-  bed_id: string | null;
-  zone_code: string | null;
+  bed_id: string | null;      // canvas item id (bed/tree id)
+  zone_code: string | null;   // "A" | "B" | ...
   crop: string | null;
   status: string | null;
   planted_at: string | null;
@@ -16,6 +16,29 @@ export type PlantingRow = {
   pin_y: number | null;
   created_at?: string | null;
 };
+
+type GardenContext = {
+  workplaceId: string;
+  areaId: string;
+  layoutId: string;
+  workplaceSlug: string;
+  areaName: string;
+};
+
+function safeAreaName(raw: string | null) {
+  const s = String(raw ?? "").trim();
+  return s.length ? s : "Garden";
+}
+
+async function fetchGardenContext(areaName: string) {
+  const res = await fetch(
+    `/api/garden-context?workplaceSlug=olivea&areaName=${encodeURIComponent(areaName)}`
+  );
+  const text = await res.text();
+  const json = text ? JSON.parse(text) : null;
+  if (!res.ok) throw new Error(json?.error ?? text ?? `garden-context failed (${res.status})`);
+  return json as GardenContext;
+}
 
 function sanitizePlantingsForDoc(doc: LayoutDoc, plantings: PlantingRow[]) {
   const items = doc?.items ?? [];
@@ -35,47 +58,59 @@ function sanitizePlantingsForDoc(doc: LayoutDoc, plantings: PlantingRow[]) {
       const bedId = p.bed_id as string;
       const allowed = zonesForBed(bedId);
       const z = p.zone_code ? String(p.zone_code).trim() : null;
-      const zone_code = z && allowed.includes(z) ? z : null;
+
+      // ✅ If the bed defines zones, validate. If not, keep whatever came from DB.
+      const zone_code =
+        allowed.length === 0 ? z : (z && allowed.includes(z) ? z : null);
+
       return { ...p, zone_code };
     });
 }
 
 export function usePlantingsRealtime(args: {
   tenantId: string | null;
-  gardenName: string | null;
+  gardenName: string | null; // this is AREA name now (we default to "Garden")
   doc: LayoutDoc;
 }) {
-  const { tenantId, gardenName, doc } = args;
+  const { tenantId, gardenName: rawGardenName, doc } = args;
 
-  const [gardenId, setGardenId] = useState<string | null>(null);
-  const mapRef = useRef<Map<string, PlantingRow>>(new Map());
+  const gardenName = safeAreaName(rawGardenName);
+
+  const ctxRef = useRef<{ key: string; ctx: GardenContext } | null>(null);
+
   const [version, setVersion] = useState(0);
+  const mapRef = useRef<Map<string, PlantingRow>>(new Map());
 
-  // ---------------------------------------------------------------------------
-  // Initial load (and whenever garden changes)
-  // ---------------------------------------------------------------------------
+  async function getCtx() {
+    const cached = ctxRef.current;
+    if (cached && cached.key === gardenName) return cached.ctx;
+    const ctx = await fetchGardenContext(gardenName);
+    ctxRef.current = { key: gardenName, ctx };
+    return ctx;
+  }
+
+  // ---------------------------------------------------------
+  // Initial load (and whenever gardenName changes)
+  // ---------------------------------------------------------
   useEffect(() => {
     let alive = true;
 
     async function load() {
       mapRef.current = new Map();
       setVersion((v) => v + 1);
-      setGardenId(null);
-
-      if (!gardenName) return;
 
       try {
-        const res = await fetch(`/api/plantings?gardenName=${encodeURIComponent(gardenName)}`);
+        const ctx = await getCtx();
+        if (!alive) return;
+
+        const res = await fetch(`/api/plantings?layoutId=${encodeURIComponent(ctx.layoutId)}`);
         const text = await res.text();
         const json = text ? JSON.parse(text) : null;
         if (!res.ok) return;
 
-        const nextGardenId = (json?.gardenId as string | null) ?? null;
         const rows = (Array.isArray(json?.rows) ? (json.rows as PlantingRow[]) : []) ?? [];
 
         if (!alive) return;
-
-        setGardenId(nextGardenId);
 
         const m = new Map<string, PlantingRow>();
         for (const r of rows) m.set(r.id, r);
@@ -92,72 +127,80 @@ export function usePlantingsRealtime(args: {
     };
   }, [gardenName]);
 
-  // ---------------------------------------------------------------------------
-  // Realtime incremental updates (tenant + garden scoped)
-  // ---------------------------------------------------------------------------
+  // ---------------------------------------------------------
+  // Realtime: listen to roseiies.plantings by workplace_id
+  // We refresh on events (simple + reliable during bridge phase)
+  // ---------------------------------------------------------
   useEffect(() => {
     if (!tenantId) return;
-    if (!gardenId) return;
 
+    let alive = true;
     const supabase = createBrowserSupabase();
+    let channel: any = null;
 
-    const channel = supabase
-      .channel(`garden_plantings:${tenantId}:${gardenId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "garden_plantings",
-          // ✅ scoped: tenant + garden (no global spam)
-          filter: `tenant_id=eq.${tenantId},garden_id=eq.${gardenId}`,
-        },
-        (payload: any) => {
-          const event = String(payload?.eventType ?? "").toUpperCase();
-          const rowNew = payload?.new as PlantingRow | undefined;
-          const rowOld = payload?.old as PlantingRow | undefined;
+    let t: any = null;
+    const scheduleReload = () => {
+      if (t) clearTimeout(t);
+      t = setTimeout(async () => {
+        try {
+          const ctx = await getCtx();
+          if (!alive) return;
 
-          const m = mapRef.current;
+          const res = await fetch(`/api/plantings?layoutId=${encodeURIComponent(ctx.layoutId)}`);
+          const text = await res.text();
+          const json = text ? JSON.parse(text) : null;
+          if (!res.ok) return;
 
-          if (event === "INSERT" && rowNew?.id) {
-            m.set(rowNew.id, rowNew);
-            setVersion((v) => v + 1);
-            return;
-          }
-
-          if (event === "UPDATE" && rowNew?.id) {
-            m.set(rowNew.id, rowNew);
-            setVersion((v) => v + 1);
-            return;
-          }
-
-          if (event === "DELETE" && rowOld?.id) {
-            m.delete(rowOld.id);
-            setVersion((v) => v + 1);
-            return;
-          }
-
-          // fallback safety (rare payload shapes)
+          const rows = (Array.isArray(json?.rows) ? (json.rows as PlantingRow[]) : []) ?? [];
+          const m = new Map<string, PlantingRow>();
+          for (const r of rows) m.set(r.id, r);
+          mapRef.current = m;
           setVersion((v) => v + 1);
+        } catch {
+          // ignore
         }
-      )
-      .subscribe();
+      }, 140);
+    };
+
+    (async () => {
+      try {
+        const ctx = await getCtx();
+        if (!alive) return;
+
+        channel = supabase
+          .channel(`roseiies:plantings:designer:${tenantId}:${ctx.workplaceId}:${gardenName}`)
+          .on(
+            "postgres_changes",
+            {
+              event: "*",
+              schema: "roseiies",
+              table: "plantings",
+              filter: `workplace_id=eq.${ctx.workplaceId}`,
+            },
+            () => scheduleReload()
+          )
+          .subscribe();
+      } catch {
+        // ignore
+      }
+    })();
 
     return () => {
-      supabase.removeChannel(channel);
+      alive = false;
+      if (t) clearTimeout(t);
+      if (channel) supabase.removeChannel(channel);
     };
-  }, [tenantId, gardenId]);
+  }, [tenantId, gardenName]);
 
-  // ---------------------------------------------------------------------------
+  // ---------------------------------------------------------
   // Output: stable array + sanitized for current doc
-  // ---------------------------------------------------------------------------
+  // ---------------------------------------------------------
   const rowsRaw = useMemo(() => {
-    // version is the “signal” that map changed
     void version;
     return Array.from(mapRef.current.values());
   }, [version]);
 
   const rows = useMemo(() => sanitizePlantingsForDoc(doc, rowsRaw), [doc, rowsRaw]);
 
-  return { gardenId, rows };
+  return { rows };
 }
