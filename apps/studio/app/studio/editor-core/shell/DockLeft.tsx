@@ -1,13 +1,59 @@
-// apps/studio/app/studio/editor-core/shell/DockLeft.tsx
 "use client";
 
 import React, { useMemo } from "react";
+import { Home, Settings, ChevronRight } from "lucide-react";
 
 export type ShellNavItem = {
   key: string;
   label: string;
-  icon?: React.ReactNode;
+  icon?: React.ReactNode | React.ComponentType<any>;
 };
+
+function cn(...xs: Array<string | false | null | undefined>) {
+  return xs.filter(Boolean).join(" ");
+}
+
+function renderIcon(icon: any, args: { active: boolean }) {
+  const { active } = args;
+
+  const common = {
+    size: 22,
+    strokeWidth: 1.6,
+    className: cn(
+      "transition-colors",
+      active ? "text-rose-600" : "text-black/45 group-hover:text-black/70"
+    ),
+  };
+
+  // ✅ Lucide icons are often forwardRef objects ({ $$typeof, render })
+  // They must be rendered as a component type, NOT as a React child.
+  if (icon && (typeof icon === "function" || typeof icon === "object")) {
+    // If it's already an element (<Icon />)
+    if (React.isValidElement(icon)) {
+      return React.cloneElement(icon as any, {
+        ...common,
+        ...((icon as any).props ?? {}),
+        className: cn(common.className, (icon as any).props?.className),
+      });
+    }
+
+    // Otherwise treat it as a component type (works for forwardRef objects)
+    const Icon = icon as React.ComponentType<any>;
+    return <Icon {...common} />;
+  }
+
+  // fallback
+  return (
+    <div
+      className={cn(
+        "h-5.5 w-5.5 rounded-md grid place-items-center text-[12px]",
+        active ? "text-rose-600" : "text-black/45"
+      )}
+    >
+      •
+    </div>
+  );
+}
 
 export default function DockLeft(props: {
   navItems: ShellNavItem[];
@@ -47,7 +93,6 @@ export default function DockLeft(props: {
     const target = e.target as HTMLElement | null;
     if (!target) return;
 
-    // Any interactive element should NEVER toggle the dock.
     const interactive = target.closest?.(
       [
         "[data-dock-interactive='true']",
@@ -63,18 +108,17 @@ export default function DockLeft(props: {
 
     if (interactive) return;
 
-    // Empty-area click toggles.
     props.setExpanded(!props.expanded);
   }
 
   return (
     <aside
-      className={[
+      className={cn(
         "h-dvh sticky top-0 z-20 flex flex-col",
         "border-r border-black/10 bg-white/70 backdrop-blur",
         "transition-[width] duration-200 ease-out",
-        props.expanded ? "w-60" : "w-18",
-      ].join(" ")}
+        props.expanded ? "w-60" : "w-18"
+      )}
       onPointerDownCapture={onDockPointerDownCapture}
     >
       {/* Header / Logo */}
@@ -83,11 +127,11 @@ export default function DockLeft(props: {
           type="button"
           data-dock-interactive="true"
           onClick={props.onGoWorkplace}
-          className={[
-            "w-full rounded-2xl hover:bg-black/5",
+          className={cn(
+            "w-full rounded-2xl transition hover:bg-black/5",
             "flex items-center",
-            props.expanded ? "px-3 py-2" : "p-2 justify-center",
-          ].join(" ")}
+            props.expanded ? "px-3 py-2" : "p-2 justify-center"
+          )}
           title="Back to Workplace"
         >
           {!props.expanded ? (
@@ -107,7 +151,7 @@ export default function DockLeft(props: {
           ) : null}
 
           {props.expanded ? (
-            <div className="min-w-0 flex items-center">
+            <div className="min-w-0 flex items-center gap-2">
               {props.brandWordmarkSrc ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
@@ -121,6 +165,9 @@ export default function DockLeft(props: {
                   {props.brandLabel ?? "Roseiies"}
                 </div>
               )}
+
+              {/* subtle affordance */}
+              <ChevronRight className="ml-auto text-black/30" size={18} strokeWidth={1.5} />
             </div>
           ) : null}
         </button>
@@ -136,25 +183,35 @@ export default function DockLeft(props: {
               key={it.key}
               type="button"
               data-dock-interactive="true"
-              onClick={() => {
-                // ✅ navigation only — NEVER auto expand/collapse
-                props.onChange(it.key);
-              }}
-              className={[
-                "w-full flex items-center gap-3 rounded-2xl px-3 py-2",
-                "transition border",
+              onClick={() => props.onChange(it.key)}
+              className={cn(
+                "group w-full flex items-center gap-3 px-3 py-2",
+                "relative transition-colors",
                 active
-                  ? "bg-black/5 border-black/10"
-                  : "bg-transparent border-transparent hover:bg-black/5 hover:border-black/10",
-              ].join(" ")}
+                  ? "text-black"
+                  : "text-black/60 hover:text-black/80"
+              )}              
               title={it.label}
             >
-              <div className="text-[18px] leading-none w-6 flex justify-center">
-                {it.icon ?? "•"}
-              </div>
+              {/* active accent bar */}
+              <div
+                className={cn(
+                  "absolute left-2 top-1/2 -translate-y-1/2 h-5 w-px rounded-full transition-opacity",
+                  active ? "opacity-100 bg-rose-600" : "opacity-0"
+                )}
+              />
+
+              <div className="w-6 h-6 flex items-center justify-center">
+                {renderIcon(it.icon, { active })}
+              </div>           
 
               {props.expanded ? (
-                <div className="text-sm font-semibold text-black/75 truncate">
+                <div
+                  className={cn(
+                    "text-sm font-semibold truncate transition-colors",
+                    active ? "text-black/80" : "text-black/70 group-hover:text-black/80"
+                  )}
+                >
                   {it.label}
                 </div>
               ) : null}
@@ -177,10 +234,10 @@ export default function DockLeft(props: {
             type="button"
             data-dock-interactive="true"
             onClick={props.onGoWorkplace}
-            className={[
+            className={cn(
               "w-full flex items-center gap-3 rounded-2xl px-3 py-2",
-              "hover:bg-black/5 border border-transparent hover:border-black/10",
-            ].join(" ")}
+              "hover:bg-black/5 border border-transparent hover:border-black/10 transition"
+            )}
             title="Back to Workplace"
           >
             <div className="h-9 w-9 rounded-2xl bg-black/5 flex items-center justify-center overflow-hidden">
@@ -193,7 +250,7 @@ export default function DockLeft(props: {
                   draggable={false}
                 />
               ) : (
-                <span className="text-[16px] text-black/60">⌂</span>
+                <Home size={18} strokeWidth={1.6} className="text-black/55" />
               )}
             </div>
 
@@ -214,10 +271,10 @@ export default function DockLeft(props: {
             type="button"
             data-dock-interactive="true"
             onClick={props.onOpenSettings}
-            className={[
+            className={cn(
               "w-full flex items-center gap-3 rounded-2xl px-3 py-2",
-              "hover:bg-black/5 border border-transparent hover:border-black/10",
-            ].join(" ")}
+              "hover:bg-black/5 border border-transparent hover:border-black/10 transition"
+            )}
             title="Settings"
           >
             <div className="h-9 w-9 rounded-2xl bg-black/5 flex items-center justify-center overflow-hidden">
@@ -230,7 +287,7 @@ export default function DockLeft(props: {
                   draggable={false}
                 />
               ) : (
-                <span className="text-[16px] text-black/60">⚙︎</span>
+                <Settings size={18} strokeWidth={1.6} className="text-black/55" />
               )}
             </div>
 

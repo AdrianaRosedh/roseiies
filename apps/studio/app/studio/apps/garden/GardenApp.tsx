@@ -11,6 +11,7 @@ import GardenSheets from "./GardenSheets";
 import StudioShell from "../../editor-core/shell";
 
 import AppShell, { type ShellNavItem } from "../../editor-core/shell/AppShell";
+import { NAV_ICONS } from "../../editor-core/shell/navIcons";
 
 export type GardenView = "sheets" | "designer";
 
@@ -37,8 +38,8 @@ export default function GardenApp({
 
   const navItems: ShellNavItem[] = useMemo(
     () => [
-      { key: "designer", label: "Map", icon: "🗺️" },
-      { key: "sheets", label: "Data", icon: "📋" },
+      { key: "designer", label: "Map", icon: NAV_ICONS.map },
+      { key: "sheets", label: "Data", icon: NAV_ICONS.data },
     ],
     []
   );
@@ -55,8 +56,7 @@ export default function GardenApp({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [store?.state?.activeLayoutId]);
 
-  // ✅ Clear selection once when entering designer view
-  // IMPORTANT: do NOT depend on `store` identity (it can change every render)
+  // Clear selection once when entering designer view
   useEffect(() => {
     if (view !== "designer") return;
     store.setSelectedIds([]);
@@ -92,6 +92,9 @@ export default function GardenApp({
     );
   }
 
+  const showSheets = view === "sheets";
+  const showDesigner = view === "designer";
+
   return (
     <AppShell
       navItems={navItems}
@@ -115,14 +118,39 @@ export default function GardenApp({
       watermarkText="Powered by Roseiies"
       dockDefaultExpanded={false}
     >
-      <div className="h-full w-full overflow-hidden">
-        {view === "sheets" ? (
+      {/* IMPORTANT:
+          Keep BOTH mounted so Map doesn't "reload" on tab switch.
+          We swap visibility with opacity + pointer-events, not conditional rendering. */}
+      <div className="relative h-full w-full overflow-hidden">
+        {/* Sheets */}
+        <div
+          className={[
+            "absolute inset-0",
+            "transition-opacity duration-200",
+            showSheets ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none",
+          ].join(" ")}
+          aria-hidden={!showSheets}
+        >
           <div className="h-full overflow-auto p-4">
-            <GardenSheets store={store} portal={portal} onGoDesign={() => onViewChange("designer")} />
+            <GardenSheets
+              store={store}
+              portal={portal}
+              onGoDesign={() => onViewChange("designer")}
+            />
           </div>
-        ) : (
+        </div>
+
+        {/* Designer */}
+        <div
+          className={[
+            "absolute inset-0",
+            "transition-opacity duration-200",
+            showDesigner ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none",
+          ].join(" ")}
+          aria-hidden={!showDesigner}
+        >
           <StudioShell module={GardenModule} store={store} portal={portal} />
-        )}
+        </div>
       </div>
     </AppShell>
   );

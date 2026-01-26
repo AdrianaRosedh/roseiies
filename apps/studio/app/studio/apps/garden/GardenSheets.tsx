@@ -1,10 +1,11 @@
 // apps/studio/app/studio/apps/garden/GardenSheets.tsx
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { PortalContext } from "../../../lib/portal/getPortalContext";
 
 import GardenSheetsErrorBoundary from "./sheets/components/GardenSheetsErrorBoundary";
+import GardenAppHeader from "./components/GardenAppHeader";
 import GardenSheetsToolbar from "./sheets/components/GardenSheetsToolbar";
 import GardenSheetsGrid from "./sheets/components/GardenSheetsGrid";
 
@@ -12,6 +13,7 @@ import { useGardenSheetCells } from "./sheets/hooks/useGardenSheetCells";
 import { useGardenSheetColumns } from "./sheets/hooks/useGardenSheetColumns";
 import { usePlantings } from "./sheets/hooks/usePlantings";
 import { useGardenSheetsModel } from "./sheets/hooks/useGardenSheetsModel";
+
 
 import type { Column } from "./sheets/types";
 
@@ -66,25 +68,19 @@ function GardenSheetsInner({
 }) {
   const activeGarden = useMemo(
     () =>
-      store.state.gardens.find((g: any) => g.id === store.state.activeGardenId) ??
-      null,
+      store.state.gardens.find((g: any) => g.id === store.state.activeGardenId) ?? null,
     [store.state]
   );
 
   // Legacy selection (Studio store)
   const gardenId = activeGarden?.id ?? null;
 
-  // ✅ IMPORTANT:
-  // Studio "garden name" is NOT the DB Area name anymore.
-  // DB Area is the physical area: "Garden" (seeded in roseiies.areas).
-  // Studio can have "test", "Winter 2026", etc — those are layouts/labels, not areas.
+  // ✅ DB Area is the physical area: "Garden" (seeded in roseiies.areas).
   const areaName = "Garden";
 
-  // Display name in the toolbar can remain the Studio garden name (optional).
-  // If you prefer, show the same as areaName. For now: show Studio label.
+  // Display label can remain the Studio garden name.
   const displayGardenName = (activeGarden?.name ?? areaName).trim();
 
-  // We still require an active Studio garden id for sheet cell persistence + UI consistency.
   if (!gardenId) {
     return (
       <div className="p-6">
@@ -129,7 +125,6 @@ function GardenSheetsInner({
         width: 180,
         options: { values: ["planned", "active", "harvested", "failed", "archived"] },
       },
-      // IMPORTANT: bed_id MUST store the canvas item id (EditorOverlay enforces this)
       { key: "bed_id", label: "Bed / Tree", type: "select", width: 240 },
       { key: "zone_code", label: "Zone", type: "select", width: 160 },
       { key: "planted_at", label: "Planted", type: "date", width: 160 },
@@ -143,16 +138,14 @@ function GardenSheetsInner({
     defaultCols,
   });
 
-  // Cells are still keyed by legacy gardenId (fine for now)
   const { cell } = useGardenSheetCells({
     tenantId: portal.tenantId,
     gardenId,
   });
 
-  // ✅ Plantings now load by DB Area name ("Garden") via /api/garden-context
   const plantings = usePlantings({
     tenantId: portal.tenantId,
-    gardenName: areaName, // yes: hook param is gardenName, but it represents DB areaName now
+    gardenName: areaName,
   });
 
   const model = useGardenSheetsModel({
@@ -168,30 +161,155 @@ function GardenSheetsInner({
     bedsOnly,
   });
 
-  return (
-    <div className="w-full">
-      <GardenSheetsToolbar
-        gardenName={displayGardenName} // display label (can be "test")
-        loading={plantings.loading}
-        lastError={plantings.lastError}
-        onRefresh={plantings.refresh}
-        onAddColumn={addColumn}
-        onGoDesign={onGoDesign}
-      />
+  /* -------------------------------------------------------
+     Airtable-like delete UX (soft delete + toast undo)
+  ------------------------------------------------------- */
 
-      <GardenSheetsGrid
-        cols={cols}
-        rows={model.displayRows}
-        bedsAndTrees={bedsAndTrees}
-        zonesForBed={model.zonesForBed}
-        getActiveBedIdForRow={model.getActiveBedIdForRow}
-        selectedRowId={model.selectedRowId}
-        onRowClick={model.onRowClick}
-        itemLabel={model.itemLabel}
-        getCellValue={model.getCellValue}
-        commitCell={model.commitCell}
-        getRowById={model.getRowById}
+  const [undoToast, setUndoToast] = useState<{ id: string } | null>(null);
+  const undoTimerRef = useRef<number | null>(null);
+
+  const showUndo = (id: string) => {
+    setUndoToast({ id });
+    if (undoTimerRef.current) window.clearTimeout(undoTimerRef.current);
+    undoTimerRef.current = window.setTimeout(() => setUndoToast(null), 5000);
+  };
+
+  const doDelete = (rowId: string) => {
+    plantings.softDelete(rowId);
+    showUndo(rowId);
+  };
+
+  const doUndo = (rowId: string) => {
+    plantings.restore(rowId);
+    setUndoToast(null);
+    if (undoTimerRef.current) window.clearTimeout(undoTimerRef.current);
+    undoTimerRef.current = null;
+  };
+
+  // Toolbar delete handler (TS-safe)
+  const onDeleteSelected = useMemo(() => {
+    const id = model.selectedRowId;
+    if (!id) return undefined;
+    return () => doDelete(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model.selectedRowId]);
+
+  // Keyboard shortcuts: Delete/Backspace => delete selected row; Cmd/Ctrl+Z => undo toast
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      const tag = el?.tagName?.toLowerCase();
+      const isTyping = tag === "input" || tag === "textarea" || el?.isContentEditable;
+      if (isTyping) return;
+
+      if (e.key === "Delete" || e.key === "Backspace") {
+        const rowId = model.selectedRowId;
+        if (!rowId) return;
+
+        e.preventDefault();
+        e.stopPropagation();
+        doDelete(rowId);
+        return;
+      }
+
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
+        const id = undoToast?.id;
+        if (!id) return;
+
+        e.preventDefault();
+        e.stopPropagation();
+        doUndo(id);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [model.selectedRowId, undoToast?.id]);
+
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (undoTimerRef.current) window.clearTimeout(undoTimerRef.current);
+    };
+  }, []);
+
+  return (
+    <div className="w-full h-dvh overflow-hidden flex flex-col">
+      {/* header (your GardenAppHeader or toolbar) */}
+      <GardenAppHeader
+        sectionLabel={displayGardenName}
+        viewLabel="Sheets"
+        statusLine={
+          plantings.lastError ? (
+            <span className="text-rose-700/80">{plantings.lastError}</span>
+          ) : null
+        }
+        subLeft={
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="rounded-lg border border-black/10 bg-white/70 px-3 py-2 text-sm hover:bg-white"
+              title="View"
+            >
+              Main view ▾
+            </button>
+        
+            <div className="hidden lg:flex items-center gap-2 text-xs text-black/45">
+              <span>Plantings</span>
+            </div>
+          </div>
+        }
+        subRight={
+          <GardenSheetsToolbar
+            loading={plantings.loading}
+            lastError={plantings.lastError}
+            onRefresh={plantings.refresh}
+            onAddColumn={addColumn}
+            onGoDesign={onGoDesign}
+            onDeleteSelected={onDeleteSelected}
+          />
+        }
       />
+      
+      {/* ✅ match Map shell spacing + framing */}
+      <div className="flex-1 min-h-0 overflow-hidden">
+        <div className="hidden md:flex gap-3 h-full overflow-hidden px-3 pb-3">
+          <div className="flex-1 rounded-2xl border border-black/10 bg-white/40 shadow-sm overflow-hidden">
+            <GardenSheetsGrid
+              cols={cols}
+              rows={model.displayRows}
+              bedsAndTrees={bedsAndTrees}
+              zonesForBed={model.zonesForBed}
+              getActiveBedIdForRow={model.getActiveBedIdForRow}
+              selectedRowId={model.selectedRowId}
+              onRowClick={model.onRowClick}
+              itemLabel={model.itemLabel}
+              getCellValue={model.getCellValue}
+              commitCell={model.commitCell}
+              getRowById={model.getRowById}
+            />
+          </div>
+        </div>
+
+        {/* optional: mobile can stay simple for now */}
+        <div className="md:hidden">
+          <GardenSheetsGrid
+            cols={cols}
+            rows={model.displayRows}
+            bedsAndTrees={bedsAndTrees}
+            zonesForBed={model.zonesForBed}
+            getActiveBedIdForRow={model.getActiveBedIdForRow}
+            selectedRowId={model.selectedRowId}
+            onRowClick={model.onRowClick}
+            itemLabel={model.itemLabel}
+            getCellValue={model.getCellValue}
+            commitCell={model.commitCell}
+            getRowById={model.getRowById}
+          />
+        </div>
+      </div>
+
+      {/* keep your undo toast as-is */}
     </div>
   );
 }

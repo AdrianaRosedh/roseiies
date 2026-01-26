@@ -1,4 +1,3 @@
-// apps/studio/app/studio/apps/garden/sheets/components/GardenSheetsGrid.tsx
 "use client";
 
 import React, { useMemo, useState } from "react";
@@ -25,7 +24,6 @@ export default function GardenSheetsGrid(props: {
   itemLabel: (id: string | null) => string;
   getCellValue: (rowId: string, colKey: string, row: PlantingRow | null) => any;
 
-  // commit API into model
   commitCell: (args: {
     rowId: string;
     colKey: string;
@@ -33,7 +31,6 @@ export default function GardenSheetsGrid(props: {
     move?: "down" | "right" | "left";
   }) => Promise<void>;
 
-  // row lookup
   getRowById: (rowId: string) => PlantingRow | null;
 }) {
   const {
@@ -55,7 +52,9 @@ export default function GardenSheetsGrid(props: {
 
   const widths = useMemo(() => cols.map((c) => c.width ?? 180), [cols]);
 
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [saveState, setSaveState] = useState<
+    "idle" | "saving" | "saved" | "error"
+  >("idle");
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
 
   async function commit(args: {
@@ -107,9 +106,9 @@ export default function GardenSheetsGrid(props: {
   }
 
   return (
-    <div className="w-full">
-      {/* native, non-card container */}
-      <div className="w-full border-t border-black/10">
+    <div className="w-full h-full flex flex-col">
+      {/* ✅ Scroll area fills the card (removes the “empty spacing” look) */}
+      <div className="flex-1 min-h-0 overflow-auto">
         {/* sticky header (Airtable feel) */}
         <div className="sticky top-0 z-10 flex border-b border-black/10 bg-white/90 backdrop-blur">
           {cols.map((c, i) => {
@@ -158,10 +157,11 @@ export default function GardenSheetsGrid(props: {
         getRowById={getRowById}
       />
 
-      {/* status + build */}
-      <div className="px-4 pb-4 pt-2 flex items-center justify-between gap-4">
+      {/* footer pinned to bottom of card (no extra “page spacing”) */}
+      <div className="px-4 pb-3 pt-2 flex items-center justify-between gap-4 border-t border-black/10 bg-white/40">
         <div className="text-xs text-black/40">
-          Roseiies Sheets Build: <span className="font-medium">{ROSEIIES_SHEETS_BUILD}</span>
+          Roseiies Sheets Build:{" "}
+          <span className="font-medium">{ROSEIIES_SHEETS_BUILD}</span>
         </div>
 
         <div className="text-xs">

@@ -1,74 +1,26 @@
-// apps/studio/app/studio/editor-core/shell/StudioShell.tsx
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { LayoutDoc, StudioModule, StudioItem } from "../types";
 import type { PortalContext } from "../../../lib/portal/getPortalContext";
-
-import { createBrowserSupabase } from "@roseiies/supabase/browser";
 
 import TopBar from "../TopBar";
 import LeftToolbar from "../LeftToolbar";
 import Inspector from "../Inspector";
 import CanvasStage from "../canvas";
-
 import MobileShell from "./MobileShell";
 
 import PanelHeader from "./desktop/PanelHeader";
 import CollapsedRail from "./desktop/CollapsedRail";
 
+import GardenAppHeader from "../../apps/garden/components/GardenAppHeader";
+import GardenMapToolbar from "../../apps/garden/components/GardenMapToolbar";
+
+import { useViewportLock } from "./hooks/useViewportLock";
+import { useRoseiiesPlantings } from "./hooks/useRoseiiesPlantings";
+import { useArrangeTools, type AlignTo } from "./hooks/useArrangeTools";
+
 export type MobileSheetKind = "context" | "tools" | "inspector" | "more" | null;
-type AlignTo = "selection" | "plot";
-
-type PlantingRow = {
-  id: string;
-  bed_id: string | null;
-  zone_code: string | null;
-  crop: string | null;
-  status: string | null;
-  planted_at: string | null;
-  pin_x: number | null;
-  pin_y: number | null;
-
-  // legacy optional fields (safe)
-  garden_id?: string | null;
-  created_at?: string | null;
-};
-
-function boundsOf(items: StudioItem[]) {
-  if (!items.length) return { minX: 0, minY: 0, maxX: 0, maxY: 0, w: 0, h: 0 };
-  const minX = Math.min(...items.map((i) => i.x));
-  const minY = Math.min(...items.map((i) => i.y));
-  const maxX = Math.max(...items.map((i) => i.x + i.w));
-  const maxY = Math.max(...items.map((i) => i.y + i.h));
-  return { minX, minY, maxX, maxY, w: maxX - minX, h: maxY - minY };
-}
-
-function sanitizePlantingsForDoc(doc: LayoutDoc, plantings: PlantingRow[]) {
-  const items = doc?.items ?? [];
-  const beds = items.filter((it: any) => it.type === "bed");
-  const validItemIds = new Set(items.map((it: any) => it.id));
-
-  const zonesForBed = (bedId: string) => {
-    const bed = beds.find((b: any) => b.id === bedId);
-    const zones = bed?.meta?.zones;
-    if (!Array.isArray(zones)) return [];
-    return zones.map((z: any) => String(z?.code ?? "").trim()).filter(Boolean);
-  };
-
-  return (plantings ?? [])
-    .filter((p) => p && p.bed_id && validItemIds.has(p.bed_id))
-    .map((p) => {
-      const bedId = p.bed_id as string;
-      const allowed = zonesForBed(bedId);
-      const z = p.zone_code ? String(p.zone_code).trim() : null;
-
-      // ✅ If bed defines zones, validate. If not, keep zone_code.
-      const zone_code = allowed.length === 0 ? z : z && allowed.includes(z) ? z : null;
-
-      return { ...p, zone_code };
-    });
-}
 
 export default function StudioShell(props: {
   module: StudioModule;
@@ -78,25 +30,7 @@ export default function StudioShell(props: {
 }) {
   const { module, store, portal, onBack } = props;
 
-  // lock viewport scroll
-  useEffect(() => {
-    const html = document.documentElement;
-    const body = document.body;
-
-    const prevHtmlOverflow = html.style.overflow;
-    const prevBodyOverflow = body.style.overflow;
-    const prevBodyHeight = body.style.height;
-
-    html.style.overflow = "hidden";
-    body.style.overflow = "hidden";
-    body.style.height = "100%";
-
-    return () => {
-      html.style.overflow = prevHtmlOverflow;
-      body.style.overflow = prevBodyOverflow;
-      body.style.height = prevBodyHeight;
-    };
-  }, []);
+  useViewportLock(true);
 
   // clear selection when layout changes
   useEffect(() => {
@@ -129,7 +63,7 @@ export default function StudioShell(props: {
   // mobile
   const [mobileSheet, setMobileSheet] = useState<MobileSheetKind>(null);
   const toggleSheet = (k: Exclude<MobileSheetKind, null>) =>
-    setMobileSheet((v: MobileSheetKind) => (v === k ? null : k));
+    setMobileSheet((v) => (v === k ? null : k));
 
   // active garden/layout/doc
   const activeGarden = useMemo(
@@ -168,9 +102,6 @@ export default function StudioShell(props: {
   const canDeleteAction = store.selectedIds.length > 0;
   const canReorder = store.selectedIds.length > 0;
 
-  const canArrange = store.selectedIds.length >= 2 && !anyLocked;
-  const canDistribute = store.selectedIds.length >= 3 && !anyLocked;
-
   function onDuplicate() {
     store.copySelected?.();
     store.pasteAtCursor?.();
@@ -186,270 +117,34 @@ export default function StudioShell(props: {
     store.updateItemsBatch?.(patches);
   }
 
-  // snap helper (do NOT snap trees)
-  function snapPatch(id: string, patch: any) {
-    const it = (doc.items ?? []).find((x: any) => x.id === id);
-    const isTree = it?.type === "tree";
-    if (!snapToGrid || isTree) return patch;
+  // plantings feed (extracted)
+  const { plantings } = useRoseiiesPlantings({
+    doc,
+    portal,
+    activeLayoutId: store?.state?.activeLayoutId ?? null,
+    areaName: "Garden",
+    workplaceSlug: "olivea",
+  });
 
-    const round = (v: number) => Math.round(v / SNAP_STEP) * SNAP_STEP;
-    const next = { ...patch };
-
-    if (typeof next.x === "number") next.x = round(next.x);
-    if (typeof next.y === "number") next.y = round(next.y);
-    if (typeof next.w === "number") next.w = Math.max(1, round(next.w));
-    if (typeof next.h === "number") next.h = Math.max(1, round(next.h));
-
-    return next;
-  }
-
-  function bringForward() {
-    if (!selectedItems.length) return;
-    store.updateItemsBatch?.(
-      selectedItems.map((it: any) => ({ id: it.id, patch: { order: (it.order ?? 0) + 1 } }))
-    );
-  }
-
-  function sendBackward() {
-    if (!selectedItems.length) return;
-    store.updateItemsBatch?.(
-      selectedItems.map((it: any) => ({ id: it.id, patch: { order: (it.order ?? 0) - 1 } }))
-    );
-  }
-
-  function bringToFront() {
-    if (!selectedItems.length) return;
-
-    const maxOrder = (doc.items ?? []).reduce((m: number, it: any) => Math.max(m, it.order ?? 0), 0);
-    const sorted = [...selectedItems].sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0));
-
-    store.updateItemsBatch?.(
-      sorted.map((it: any, idx: number) => ({ id: it.id, patch: { order: maxOrder + 1 + idx } }))
-    );
-  }
-
-  function sendToBack() {
-    if (!selectedItems.length) return;
-
-    const minOrder = (doc.items ?? []).reduce((m: number, it: any) => Math.min(m, it.order ?? 0), 0);
-    const sorted = [...selectedItems].sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0));
-
-    store.updateItemsBatch?.(
-      sorted.map((it: any, idx: number) => ({
-        id: it.id,
-        patch: { order: minOrder - sorted.length + idx },
-      }))
-    );
-  }
-
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      const mod = e.metaKey || e.ctrlKey;
-      if (!mod) return;
-
-      if (e.key === "]") {
-        e.preventDefault();
-        if (e.shiftKey) bringToFront();
-        else bringForward();
-      }
-      if (e.key === "[") {
-        e.preventDefault();
-        if (e.shiftKey) sendToBack();
-        else sendBackward();
-      }
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedItems, doc.items]);
-
-  function getAlignFrame(): { x: number; y: number; w: number; h: number } | null {
-    if (selectedItems.length < 2) return null;
-
-    if (alignTo === "plot") {
-      return { x: 0, y: 0, w: doc.canvas.width, h: doc.canvas.height };
-    }
-
-    const b = boundsOf(selectedItems);
-    return { x: b.minX, y: b.minY, w: b.w, h: b.h };
-  }
-
-  function alignSelected(k: "left" | "center" | "right" | "top" | "middle" | "bottom") {
-    if (!canArrange) return;
-    const frame = getAlignFrame();
-    if (!frame) return;
-
-    const { x, y, w, h } = frame;
-    const patches: Array<{ id: string; patch: Partial<StudioItem> }> = [];
-
-    selectedItems.forEach((it) => {
-      if (it.meta?.locked) return;
-
-      let nx = it.x;
-      let ny = it.y;
-
-      if (k === "left") nx = x;
-      if (k === "center") nx = x + w / 2 - it.w / 2;
-      if (k === "right") nx = x + w - it.w;
-
-      if (k === "top") ny = y;
-      if (k === "middle") ny = y + h / 2 - it.h / 2;
-      if (k === "bottom") ny = y + h - it.h;
-
-      patches.push({ id: it.id, patch: snapPatch(it.id, { x: nx, y: ny }) });
-    });
-
-    store.updateItemsBatch?.(patches);
-  }
-
-  function distributeSelected(axis: "x" | "y") {
-    if (!canDistribute) return;
-
-    const items = [...selectedItems].filter((it) => !it.meta?.locked);
-    if (items.length < 3) return;
-
-    const patches: Array<{ id: string; patch: Partial<StudioItem> }> = [];
-
-    if (axis === "x") {
-      const sorted = items.sort((a, b) => a.x - b.x);
-      const b = boundsOf(sorted);
-      const totalW = sorted.reduce((sum, it) => sum + it.w, 0);
-      const gaps = sorted.length - 1;
-      const gap = gaps > 0 ? (b.w - totalW) / gaps : 0;
-
-      let cursor = b.minX;
-      sorted.forEach((it) => {
-        patches.push({ id: it.id, patch: snapPatch(it.id, { x: cursor, y: it.y }) });
-        cursor += it.w + gap;
-      });
-
-      store.updateItemsBatch?.(patches);
-      return;
-    }
-
-    const sorted = items.sort((a, b) => a.y - b.y);
-    const b = boundsOf(sorted);
-    const totalH = sorted.reduce((sum, it) => sum + it.h, 0);
-    const gaps = sorted.length - 1;
-    const gap = gaps > 0 ? (b.h - totalH) / gaps : 0;
-
-    let cursor = b.minY;
-    sorted.forEach((it) => {
-      patches.push({ id: it.id, patch: snapPatch(it.id, { x: it.x, y: cursor }) });
-      cursor += it.h + gap;
-    });
-
-    store.updateItemsBatch?.(patches);
-  }
-
-  // ---------------------------------------------------------------------------
-  // ✅ Plantings (Roseiies): read from roseiies.plantings via layout context
-  // ---------------------------------------------------------------------------
-  const [plantingsRaw, setPlantingsRaw] = useState<PlantingRow[]>([]);
-  const inFlightRef = useRef<AbortController | null>(null);
-
-  // DB Area name is physical area. For now it is always "Garden".
-  const areaName = "Garden";
-
-  // cache context in-memory
-  const ctxRef = useRef<{ key: string; ctx: any } | null>(null);
-
-  async function getGardenCtx() {
-    const cached = ctxRef.current;
-    if (cached && cached.key === areaName) return cached.ctx;
-
-    const res = await fetch(
-      `/api/garden-context?workplaceSlug=olivea&areaName=${encodeURIComponent(areaName)}`
-    );
-    const text = await res.text();
-    const json = text ? JSON.parse(text) : null;
-    if (!res.ok) throw new Error(json?.error ?? text ?? `garden-context failed (${res.status})`);
-
-    ctxRef.current = { key: areaName, ctx: json };
-    return json;
-  }
-
-  async function refreshPlantingsRoseiies() {
-    try {
-      const ctx = await getGardenCtx();
-
-      // cancel old request
-      if (inFlightRef.current) inFlightRef.current.abort();
-      const ac = new AbortController();
-      inFlightRef.current = ac;
-
-      const res = await fetch(`/api/plantings?layoutId=${encodeURIComponent(ctx.layoutId)}`, {
-        signal: ac.signal,
-      });
-      const text = await res.text();
-      const json = text ? JSON.parse(text) : null;
-
-      if (!res.ok) return;
-
-      const rows = (Array.isArray(json?.rows) ? json.rows : []) as PlantingRow[];
-      setPlantingsRaw(rows);
-    } catch {
-      // ignore in designer
-    }
-  }
-
-  // initial fetch / layout switch
-  useEffect(() => {
-    refreshPlantingsRoseiies();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [store?.state?.activeLayoutId, portal.tenantId]);
-
-  // realtime subscription: roseiies.plantings
-  useEffect(() => {
-    if (!portal.tenantId) return;
-
-    const supabase = createBrowserSupabase();
-    let channel: any = null;
-    let alive = true;
-
-    let t: any = null;
-    const scheduleRefresh = () => {
-      if (t) clearTimeout(t);
-      t = setTimeout(() => refreshPlantingsRoseiies(), 140);
-    };
-
-    (async () => {
-      try {
-        const ctx = await getGardenCtx();
-        if (!alive) return;
-
-        channel = supabase
-          .channel(`roseiies:plantings:${portal.tenantId}:${ctx.workplaceId}:${areaName}`)
-          .on(
-            "postgres_changes",
-            {
-              event: "*",
-              schema: "roseiies",
-              table: "plantings",
-              filter: `workplace_id=eq.${ctx.workplaceId}`,
-            },
-            () => scheduleRefresh()
-          )
-          .subscribe();
-      } catch {
-        // ignore
-      }
-    })();
-
-    return () => {
-      alive = false;
-      if (t) clearTimeout(t);
-      if (channel) supabase.removeChannel(channel);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [portal.tenantId]);
-
-  // sanitize for Canvas + Inspector
-  const plantings = useMemo(
-    () => sanitizePlantingsForDoc(doc, plantingsRaw),
-    [doc, plantingsRaw]
-  );
+  // arrange tools (extracted)
+  const {
+    canArrange,
+    canDistribute,
+    bringForward,
+    sendBackward,
+    bringToFront,
+    sendToBack,
+    alignSelected,
+    distributeSelected,
+  } = useArrangeTools({
+    doc,
+    store,
+    selectedItems,
+    anyLocked,
+    alignTo,
+    snapToGrid,
+    snapStep: SNAP_STEP,
+  });
 
   // CanvasStage props
   const canvasProps = {
@@ -464,7 +159,7 @@ export default function StudioShell(props: {
     stagePos: store.stagePos,
     setStagePos: store.setStagePos,
     onAddItemAtWorld: store.addItemAtWorld,
-    onUpdateItem: (id: string, patch: any) => store.updateItem?.(id, snapPatch(id, patch)),
+    onUpdateItem: (id: string, patch: any) => store.updateItem?.(id, patch),
     onUpdateCanvas: (patch: Partial<LayoutDoc["canvas"]>) =>
       store.updateLayoutDoc({ canvas: { ...doc.canvas, ...patch } }),
     setCursorWorld: store.setCursorWorld,
@@ -472,21 +167,15 @@ export default function StudioShell(props: {
     onCopySelected: store.copySelected,
     onPasteAtCursor: store.pasteAtCursor,
     onDeleteSelected: store.deleteSelected,
-
     onUndo: store.undo,
     onRedo: store.redo,
-
     showGrid,
     snapToGrid,
     snapStep: SNAP_STEP,
     cursorWorld: store.cursorWorld,
-
     selectionVersion: store.selectionVersion,
-
     treePlacing,
     setTreePlacing,
-
-    // ✅ read-only plantings feed for pins + Inspector
     plantings,
   };
 
@@ -498,35 +187,42 @@ export default function StudioShell(props: {
 
   return (
     <div className="w-full h-dvh overflow-hidden flex flex-col">
-      <TopBar
-        module={module}
-        state={store.state}
-        activeGarden={activeGarden}
-        layoutsForGarden={layoutsForGarden}
-        activeLayout={activeLayout}
-        stageScale={store.stageScale}
-        panMode={store.panMode}
-        onBack={onBack}
-        onSetGarden={store.setActiveGarden}
-        onSetLayout={store.setActiveLayout}
-        onNewGarden={store.newGarden}
-        onRenameGarden={store.renameGarden}
-        onNewLayout={store.newLayout}
-        onRenameLayout={store.renameLayout}
-        onPublish={() => store.publishLayout?.(portal.tenantId)}
-        onResetView={store.resetView}
-        onCopy={store.copySelected}
-        onPaste={store.pasteAtCursor}
-        onDelete={store.deleteSelected}
-        canCopy={canCopy}
-        canPaste={canPaste}
-        canDelete={canDelete}
-        onOpenMobileMore={() => toggleSheet("more")}
-        onOpenMobileContext={() => toggleSheet("context")}
+      {/* IMPORTANT:
+          Keep TopBar here (Map view). Your TopBar can render AppTopBar internally,
+          which makes Map + Sheets uniform without adding AppTopBar inside StudioShell. */}
+      <GardenAppHeader
+        sectionLabel={activeGarden?.name ?? "Garden"}
+        viewLabel="Map"
+        subLeft={
+          <GardenMapToolbar
+            state={store.state}
+            activeGarden={activeGarden}
+            layoutsForGarden={layoutsForGarden}
+            activeLayout={activeLayout}
+            stageScale={store.stageScale ?? 1}
+            onBack={onBack}
+            onSetGarden={(id) => store.setActiveGardenId?.(id)}
+            onSetLayout={(id) => store.setActiveLayoutId?.(id)}
+            onNewGarden={(name) => store.createGarden?.(name)}
+            onRenameGarden={(name) => store.renameGarden?.(name)}
+            onNewLayout={(name) => store.createLayout?.(name)}
+            onRenameLayout={(name) => store.renameLayout?.(name)}
+            onPublish={() => store.publishActiveLayout?.({ portal })}
+            onResetView={() => store.resetView?.()}
+            onCopy={() => store.copySelected?.()}
+            onPaste={() => store.pasteAtCursor?.()}
+            onDelete={() => store.deleteSelected?.()}
+            canCopy={canCopy}
+            canPaste={canPaste}
+            canDelete={canDelete}
+          />
+        }
       />
 
       <div className="flex-1 overflow-hidden">
+        {/* Desktop */}
         <div className="hidden md:flex gap-3 mt-3 h-full overflow-hidden px-3 pb-3">
+          {/* Left */}
           <div className="shrink-0 transition-[width] duration-300 ease-out" style={{ width: leftW }}>
             <div className="h-full rounded-2xl border border-black/10 bg-white/60 shadow-sm backdrop-blur overflow-hidden">
               {leftOpen ? (
@@ -576,10 +272,12 @@ export default function StudioShell(props: {
             </div>
           </div>
 
+          {/* Canvas */}
           <div className="flex-1 rounded-2xl border border-black/10 bg-white/40 shadow-sm overflow-hidden relative">
             <CanvasStage {...(canvasProps as any)} />
           </div>
 
+          {/* Right */}
           <div className="shrink-0 transition-[width] duration-300 ease-out" style={{ width: rightW }}>
             <div className="h-full rounded-2xl border border-black/10 bg-white/60 shadow-sm backdrop-blur overflow-hidden">
               {rightOpen ? (
@@ -605,6 +303,7 @@ export default function StudioShell(props: {
           </div>
         </div>
 
+        {/* Mobile (single instance only) */}
         <MobileShell
           module={module}
           store={store}

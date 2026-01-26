@@ -300,6 +300,7 @@ export async function GET(req: Request) {
     )
     .eq("workplace_id", ctx.workplaceId)
     .eq("area_id", ctx.areaId)
+    .is("deleted_at", null)
     .order("created_at", { ascending: false });
 
   if (error) return Response.json({ error: error.message }, { status: 400 });
@@ -425,92 +426,138 @@ export async function PATCH(req: Request) {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  // If user edits bed_id or crop or zone_code, we translate to canonical ids.
-  // Otherwise patch pin/status/planted_at directly.
+  try {
+    const workplaceSlug = String(body?.workplaceSlug ?? "olivea").trim();
+    const areaName = String(body?.areaName ?? body?.gardenName ?? "Garden").trim();
+    const layoutId = (body?.layoutId as string | null | undefined) ?? null;
 
-  // Resolve context (optional, used only if bed/crop/zone changes)
-  const workplaceSlug = String(body?.workplaceSlug ?? "olivea").trim();
-  const areaName = String(body?.areaName ?? body?.gardenName ?? "Garden").trim();
-  const layoutId = (body?.layoutId as string | null | undefined) ?? null;
+    const needsCtx = ("crop" in body) || ("bed_id" in body) || ("zone_code" in body);
 
-  const needsCtx = ("crop" in body) || ("bed_id" in body) || ("zone_code" in body);
-  const resolved = needsCtx
-    ? await resolveContext({ supabase, workplaceSlug, areaName, layoutId })
-    : { ctx: null as Context | null };
-
-  const ctx = resolved.ctx;
-
-
-  const patch: Record<string, any> = {};
-
-  // status
-  if ("status" in body) {
-   const s = (body?.status as string | null | undefined)?.trim();
-   if (s && ["planned", "active", "harvested", "failed", "archived"].includes(s)) {
-     patch.status = s;
-   }
-   // else: don't touch status
-  }
-
-  // planted_at
-  if ("planted_at" in body) patch.planted_at = body.planted_at ?? null;
-
-  // pins
-  if ("pin_x" in body) patch.pin_x = body.pin_x ?? null;
-  if ("pin_y" in body) patch.pin_y = body.pin_y ?? null;
-
-  // crop -> item_id
-  if ("crop" in body && ctx) {
-    const crop = (body?.crop as string | null | undefined)?.trim();
-    if (crop) patch.item_id = await ensureItemId({ supabase, workplaceId: ctx.workplaceId, crop });
-  }
-
-  // bed_id -> asset_id
-  if ("bed_id" in body && ctx) {
-    const bedId = (body?.bed_id as string | null | undefined)?.trim();
-    if (bedId) patch.asset_id = await ensureAssetId({ supabase, workplaceId: ctx.workplaceId, areaId: ctx.areaId, layoutId: ctx.layoutId, bedId });
-  }
-
-  // zone_code -> zone_id (requires asset_id)
-  if ("zone_code" in body && ctx) {
-    const z = (body?.zone_code as string | null | undefined)?.trim();
-    if (!z) patch.zone_id = null;
-    else {
-      // Need current (or patched) asset_id
-      const assetId =
-        patch.asset_id ??
-        (
-          await supabase
-            .schema("roseiies")
-            .from("plantings")
-            .select("asset_id")
-            .eq("id", id)
-            .maybeSingle()
-        )?.data?.asset_id;
-
-      if (assetId) patch.zone_id = await ensureZoneId({ supabase, workplaceId: ctx.workplaceId, assetId, zoneCode: z });
+    let ctx: Context | null = null;
+    if (needsCtx) {
+      const resolved = await resolveContext({ supabase, workplaceSlug, areaName, layoutId });
+      if (!resolved.ctx) {
+        return Response.json(
+          { error: resolved.error ?? "Missing context" },
+          { status: 400 }
+        );
+      }
+      ctx = resolved.ctx;
     }
+
+    const patch: Record<string, any> = {};
+
+    // ✅ Soft delete / restore (no ctx needed)
+    if (body?.deleted === true) {
+      patch.deleted_at = new Date().toISOString();
+      patch.deleted_by = null;
+    }
+    if (body?.deleted === false) {
+      patch.deleted_at = null;
+      patch.deleted_by = null;
+    }
+
+    // status
+    if ("status" in body) {
+      const s = (body?.status as string | null | undefined)?.trim();
+      if (s && ["planned", "active", "harvested", "failed", "archived"].includes(s)) {
+        patch.status = s;
+      }
+    }
+    
+    // planted_at
+    if ("planted_at" in body) patch.planted_at = body.planted_at ?? null;
+
+    // pins
+    if ("pin_x" in body) patch.pin_x = body.pin_x ?? null;
+    if ("pin_y" in body) patch.pin_y = body.pin_y ?? null;
+
+    // crop -> item_id
+    if ("crop" in body && ctx) {
+      const crop = (body?.crop as string | null | undefined)?.trim();
+      if (crop) {
+        patch.item_id = await ensureItemId({ supabase, workplaceId: ctx.workplaceId, crop });
+      }
+    }
+
+    // bed_id -> asset_id
+    if ("bed_id" in body && ctx) {
+      const bedId = (body?.bed_id as string | null | undefined)?.trim();
+      if (bedId) {
+        patch.asset_id = await ensureAssetId({
+          supabase,
+          workplaceId: ctx.workplaceId,
+          areaId: ctx.areaId,
+          layoutId: ctx.layoutId,
+          bedId,
+        });
+      }
+    }
+
+    // zone_code -> zone_id (requires asset_id)
+    if ("zone_code" in body && ctx) {
+      const z = (body?.zone_code as string | null | undefined)?.trim();
+      if (!z) {
+        patch.zone_id = null;
+      } else {
+        // Need current (or patched) asset_id
+        const assetId =
+          patch.asset_id ??
+          (
+            await supabase
+              .schema("roseiies")
+              .from("plantings")
+              .select("asset_id")
+              .eq("id", id)
+              .maybeSingle()
+          )?.data?.asset_id;
+
+        if (assetId) {
+          patch.zone_id = await ensureZoneId({
+            supabase,
+            workplaceId: ctx.workplaceId,
+            assetId,
+            zoneCode: z,
+          });
+        }
+      }
+    }
+
+    // ✅ prevent update({}) which can behave oddly / mask bugs
+    if (Object.keys(patch).length === 0) {
+      return Response.json({ error: "No valid fields to update" }, { status: 400 });
+    }
+
+    const { data: updated, error } = await supabase
+      .schema("roseiies")
+      .from("plantings")
+      .update(patch)
+      .eq("id", id)
+      .select(
+        "id, planted_at, status, pin_x, pin_y, created_at, item:items!plantings_item_id_fkey(name), asset:assets!plantings_asset_id_fkey(tags), zone:zones!plantings_zone_id_fkey(code)"
+      )
+      .single();
+
+    if (error || !updated?.id) {
+      return Response.json({ error: error?.message ?? "Update failed" }, { status: 400 });
+    }
+
+    return Response.json({
+      id: String(updated.id),
+      bed_id: extractCanvasIdFromTags(tagsFromJoin(updated?.asset)) ?? null,
+      zone_code: codeFromJoin(updated?.zone),
+      crop: nameFromJoin(updated?.item),
+      status: updated?.status ?? null,
+      planted_at: updated?.planted_at ?? null,
+      pin_x: updated?.pin_x ?? null,
+      pin_y: updated?.pin_y ?? null,
+      created_at: updated?.created_at ?? null,
+    });
+  } catch (e: any) {
+    console.error("PATCH /api/plantings crashed", { id, body, error: e });
+    return Response.json(
+      { error: e?.message ?? "PATCH /api/plantings crashed" },
+      { status: 400 }
+    );
   }
-
-  const { data: updated, error } = await supabase
-    .schema("roseiies")
-    .from("plantings")
-    .update(patch)
-    .eq("id", id)
-    .select("id, planted_at, status, pin_x, pin_y, created_at, item:items!plantings_item_id_fkey(name), asset:assets!plantings_asset_id_fkey(tags), zone:zones!plantings_zone_id_fkey(code)")
-    .single();
-
-  if (error || !updated?.id) return Response.json({ error: error?.message ?? "Update failed" }, { status: 400 });
-
-  return Response.json({
-    id: String(updated.id),
-    bed_id: extractCanvasIdFromTags(tagsFromJoin(updated?.asset)) ?? null,
-    zone_code: codeFromJoin(updated?.zone),
-    crop: nameFromJoin(updated?.item),
-    status: updated?.status ?? null,
-    planted_at: updated?.planted_at ?? null,
-    pin_x: updated?.pin_x ?? null,
-    pin_y: updated?.pin_y ?? null,
-    created_at: updated?.created_at ?? null,
-  });  
 }

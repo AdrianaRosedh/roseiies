@@ -1,8 +1,10 @@
+// apps/studio/app/studio/editor-core/TopBar.tsx
 "use client";
 
 import { useMemo, useState } from "react";
 import type { Garden, Layout, StudioModule, WorkspaceStore } from "./types";
 import Modal from "./ui/Modal";
+import AppTopBar from "./shell/components/AppTopBar";
 
 type Mode = null | "newGarden" | "renameGarden" | "newLayout" | "renameLayout";
 
@@ -41,18 +43,29 @@ export default function TopBar(props: {
   canPaste: boolean;
   canDelete: boolean;
 
-  // ✅ NEW: let StudioShellInner open mobile sheets
   onOpenMobileMore?: () => void;
   onOpenMobileContext?: () => void;
+
+  // optional identity overrides
+  appLabel?: string;
+  viewLabel?: string;
 }) {
-  const { state, layoutsForGarden, activeGarden, activeLayout, stageScale, panMode } = props;
+  const { state, layoutsForGarden, activeGarden, activeLayout, stageScale } =
+    props;
 
   const [mode, setMode] = useState<Mode>(null);
   const [value, setValue] = useState("");
   const [publishing, setPublishing] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
-  const publishedDot = useMemo(() => (activeLayout?.published ? "●" : ""), [activeLayout]);
+  const publishedDot = useMemo(
+    () => (activeLayout?.published ? "●" : ""),
+    [activeLayout]
+  );
+
+  const appLabel = props.appLabel ?? "Garden";
+  const viewLabel = props.viewLabel ?? "Map";
+  const sectionLabel = activeGarden?.name ?? "Garden";
 
   function open(m: Exclude<Mode, null>) {
     setMode(m);
@@ -90,7 +103,11 @@ export default function TopBar(props: {
       if (maybe && typeof (maybe as any).then === "function") {
         const res = (await maybe) as PublishResult;
         if (res.ok) {
-          setStatus(`Published${res.itemsWritten != null ? ` · ${res.itemsWritten} items` : ""}`);
+          setStatus(
+            `Published${
+              res.itemsWritten != null ? ` · ${res.itemsWritten} items` : ""
+            }`
+          );
         } else {
           setStatus(`Publish failed · ${res.error}`);
         }
@@ -105,152 +122,175 @@ export default function TopBar(props: {
 
   return (
     <div className="w-full">
-      {/* ✅ Mobile header (compact) */}
-      <header className="md:hidden h-12 flex items-center justify-between gap-2 border border-black/10 bg-white/60 backdrop-blur px-3 rounded-xl shadow-sm">
-        <div className="flex items-center gap-2 min-w-0">
-          {props.onBack ? (
+      {/* Mobile */}
+      <div className="md:hidden">
+        <AppTopBar
+          compact
+          appLabel={appLabel}
+          viewLabel={viewLabel}
+          sectionLabel={sectionLabel}
+          center={
             <button
-              onClick={props.onBack}
-              className="h-9 w-9 rounded-xl border border-black/10 bg-white/80 shadow-sm hover:bg-black/5 inline-flex items-center justify-center"
-              title="Back"
-              aria-label="Back"
+              type="button"
+              onClick={() => props.onOpenMobileContext?.()}
+              className="h-9 px-3 rounded-xl border border-black/10 bg-white/80 shadow-sm hover:bg-black/5 text-xs text-black/80 truncate max-w-[55vw]"
+              title="Garden / Layout"
             >
-              ←
+              {activeGarden?.name ?? "Garden"} · {activeLayout?.name ?? "Layout"}
+              {activeLayout?.published ? " ●" : ""}
             </button>
-          ) : null}
-
-          <button
-            type="button"
-            onClick={() => props.onOpenMobileContext?.()}
-            className="h-9 px-3 rounded-xl border border-black/10 bg-white/80 shadow-sm hover:bg-black/5 text-xs text-black/80 truncate max-w-[55vw]"
-            title="Garden / Layout"
-          >
-            {activeGarden?.name ?? "Garden"} · {activeLayout?.name ?? "Layout"}
-            {activeLayout?.published ? " ●" : ""}
-          </button>
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="rounded-xl border border-black/10 bg-white/80 px-3 py-2 text-xs text-black/70 shadow-sm">
-            {Math.round(stageScale * 100)}%
-          </span>
-
-          <button
-            type="button"
-            onClick={() => props.onOpenMobileMore?.()}
-            className="h-9 w-9 rounded-xl border border-black/10 bg-white/80 shadow-sm hover:bg-black/5 inline-flex items-center justify-center"
-            title="More"
-            aria-label="More"
-          >
-            <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <circle cx="6" cy="10" r="1.5" fill="rgba(15,23,42,0.75)" />
-              <circle cx="10" cy="10" r="1.5" fill="rgba(15,23,42,0.75)" />
-              <circle cx="14" cy="10" r="1.5" fill="rgba(15,23,42,0.75)" />
-            </svg>
-          </button>
-        </div>
-      </header>
-
-      {/* ✅ Desktop header (your existing UI) */}
-      <header className="hidden md:block border-b border-black/10 bg-white/70 backdrop-blur">
-        <div className="h-14 flex items-center gap-3 px-3 overflow-x-auto">
-          {/* LEFT cluster */}
-          <div className="flex items-center gap-2 min-w-max">
-            {props.onBack ? (
-              <button
-                onClick={props.onBack}
-                className="rounded-lg border border-black/10 bg-white px-3 py-2 text-xs text-black/80 shadow-sm hover:bg-black/5"
-                title="Back to Workplace"
-                aria-label="Back to Workplace"
-              >
-                ←
-              </button>
-            ) : null}
-      
-            <select
-              value={state.activeGardenId ?? ""}
-              onChange={(e) => props.onSetGarden(e.target.value)}
-              className="rounded-lg border border-black/10 bg-white px-3 py-2 text-xs shadow-sm"
-            >
-              {state.gardens.map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.name}
-                </option>
-              ))}
-            </select>
-            
-            <button className={btn("ghost")} onClick={() => open("renameGarden")} disabled={!activeGarden}>
-              Rename
-            </button>
-            
-            <button className={btn("ghost")} onClick={() => open("newGarden")}>
-              + Garden
-            </button>
-            
-            <span className="mx-2 h-5 w-px bg-black/10" />
-            
-            <select
-              value={state.activeLayoutId ?? ""}
-              onChange={(e) => props.onSetLayout(e.target.value)}
-              className="rounded-lg border border-black/10 bg-white px-3 py-2 text-xs shadow-sm"
-            >
-              {layoutsForGarden.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.published ? "● " : ""}
-                  {l.name}
-                </option>
-              ))}
-            </select>
-            
-            <button className={btn("ghost")} onClick={() => open("renameLayout")} disabled={!activeLayout}>
-              Rename
-            </button>
-            
-            <button className={btn("ghost")} onClick={() => open("newLayout")} disabled={!state.activeGardenId}>
-              + Layout
-            </button>
-            
-            <button
-              className={btn("primary")}
-              onClick={runPublish}
-              disabled={!activeLayout || publishing}
-              title="Publish this layout"
-            >
-              {publishing ? "Publishing…" : `Publish ${publishedDot}`.trim()}
-            </button>
-          </div>
-            
-          {/* RIGHT cluster */}
-          <div className="flex items-center gap-2 min-w-max ml-auto">
-            {status ? (
-              <span className="hidden md:inline-flex rounded-full border border-black/10 bg-white px-3 py-2 text-xs text-black/70 shadow-sm">
-                {status}
+          }
+          actions={
+            <>
+              <span className="rounded-xl border border-black/10 bg-white/80 px-3 py-2 text-xs text-black/70 shadow-sm">
+                {Math.round(stageScale * 100)}%
               </span>
-            ) : null}
-      
-            <span className="rounded-full border border-black/10 bg-white px-3 py-2 text-xs text-black/70 shadow-sm">
-              Zoom: {Math.round(stageScale * 100)}%
-            </span>
-          
-            <button className={btn("ghost")} onClick={props.onResetView}>
-              Reset
-            </button>
-          
-            <button className={btn("ghost")} onClick={props.onCopy} disabled={!props.canCopy}>
-              Copy
-            </button>
-          
-            <button className={btn("ghost")} onClick={props.onPaste} disabled={!props.canPaste}>
-              Paste
-            </button>
-          
-            <button className={btn("danger")} onClick={props.onDelete} disabled={!props.canDelete}>
-              Delete
-            </button>
-          </div>
-        </div>
-      </header>
-          
+
+              <button
+                type="button"
+                onClick={() => props.onOpenMobileMore?.()}
+                className="h-9 w-9 rounded-xl border border-black/10 bg-white/80 shadow-sm hover:bg-black/5 inline-flex items-center justify-center"
+                title="More"
+                aria-label="More"
+              >
+                <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+                  <circle cx="6" cy="10" r="1.5" fill="rgba(15,23,42,0.75)" />
+                  <circle cx="10" cy="10" r="1.5" fill="rgba(15,23,42,0.75)" />
+                  <circle cx="14" cy="10" r="1.5" fill="rgba(15,23,42,0.75)" />
+                </svg>
+              </button>
+            </>
+          }
+        />
+      </div>
+
+      {/* Desktop */}
+      <div className="hidden md:block">
+        <AppTopBar
+          appLabel={appLabel}
+          viewLabel={viewLabel}
+          sectionLabel={sectionLabel}
+          center={
+            <div className="flex items-center gap-2 min-w-max">
+              {props.onBack ? (
+                <button
+                  onClick={props.onBack}
+                  className="rounded-lg border border-black/10 bg-white px-3 py-2 text-xs text-black/80 shadow-sm hover:bg-black/5"
+                  title="Back to Workplace"
+                  aria-label="Back to Workplace"
+                >
+                  ←
+                </button>
+              ) : null}
+
+              <select
+                value={state.activeGardenId ?? ""}
+                onChange={(e) => props.onSetGarden(e.target.value)}
+                className="rounded-lg border border-black/10 bg-white px-3 py-2 text-xs shadow-sm"
+              >
+                {state.gardens.map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.name}
+                  </option>
+                ))}
+              </select>
+
+              <button
+                className={btn("ghost")}
+                onClick={() => open("renameGarden")}
+                disabled={!activeGarden}
+              >
+                Rename
+              </button>
+
+              <button className={btn("ghost")} onClick={() => open("newGarden")}>
+                + Garden
+              </button>
+
+              <span className="mx-2 h-5 w-px bg-black/10" />
+
+              <select
+                value={state.activeLayoutId ?? ""}
+                onChange={(e) => props.onSetLayout(e.target.value)}
+                className="rounded-lg border border-black/10 bg-white px-3 py-2 text-xs shadow-sm"
+              >
+                {layoutsForGarden.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.published ? "● " : ""}
+                    {l.name}
+                  </option>
+                ))}
+              </select>
+
+              <button
+                className={btn("ghost")}
+                onClick={() => open("renameLayout")}
+                disabled={!activeLayout}
+              >
+                Rename
+              </button>
+
+              <button
+                className={btn("ghost")}
+                onClick={() => open("newLayout")}
+                disabled={!state.activeGardenId}
+              >
+                + Layout
+              </button>
+            </div>
+          }
+          actions={
+            <>
+              {status ? (
+                <span className="hidden md:inline-flex rounded-full border border-black/10 bg-white px-3 py-2 text-xs text-black/70 shadow-sm">
+                  {status}
+                </span>
+              ) : null}
+
+              <button
+                className={btn("primary")}
+                onClick={runPublish}
+                disabled={!activeLayout || publishing}
+                title="Publish this layout"
+              >
+                {publishing ? "Publishing…" : `Publish ${publishedDot}`.trim()}
+              </button>
+
+              <span className="rounded-full border border-black/10 bg-white px-3 py-2 text-xs text-black/70 shadow-sm">
+                Zoom: {Math.round(stageScale * 100)}%
+              </span>
+
+              <button className={btn("ghost")} onClick={props.onResetView}>
+                Reset
+              </button>
+
+              <button
+                className={btn("ghost")}
+                onClick={props.onCopy}
+                disabled={!props.canCopy}
+              >
+                Copy
+              </button>
+
+              <button
+                className={btn("ghost")}
+                onClick={props.onPaste}
+                disabled={!props.canPaste}
+              >
+                Paste
+              </button>
+
+              <button
+                className={btn("danger")}
+                onClick={props.onDelete}
+                disabled={!props.canDelete}
+              >
+                Delete
+              </button>
+            </>
+          }
+        />
+      </div>
 
       <Modal
         open={mode !== null}

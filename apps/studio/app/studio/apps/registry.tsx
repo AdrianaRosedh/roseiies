@@ -1,6 +1,7 @@
+// apps/studio/app/studio/apps/registry.tsx
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import type { PortalContext } from "../../lib/portal/getPortalContext";
 import type { AppTile } from "../WorkplaceHome";
 
@@ -11,6 +12,25 @@ export type AppDefinition = {
   render: (args: { portal: PortalContext; onBack: () => void }) => React.ReactNode;
 };
 
+function gardenViewKey(tenantId: string) {
+  return `roseiies:garden:view:v1:${tenantId}`;
+}
+
+function readGardenView(tenantId: string): GardenView {
+  try {
+    const raw = localStorage.getItem(gardenViewKey(tenantId));
+    return raw === "sheets" || raw === "designer" ? raw : "designer";
+  } catch {
+    return "designer";
+  }
+}
+
+function writeGardenView(tenantId: string, view: GardenView) {
+  try {
+    localStorage.setItem(gardenViewKey(tenantId), view);
+  } catch {}
+}
+
 function GardenAppHost({
   portal,
   onBack,
@@ -18,14 +38,49 @@ function GardenAppHost({
   portal: PortalContext;
   onBack: () => void;
 }) {
+  const tenantId = portal?.tenantId ?? "";
+
+  // deterministic initial state
   const [view, setView] = useState<GardenView>("designer");
+
+  // ✅ gate rendering until we restore preference
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    if (!tenantId) {
+      setReady(true);
+      return;
+    }
+    const v = readGardenView(tenantId);
+    setView(v);
+    setReady(true);
+  }, [tenantId]);
+
+  useEffect(() => {
+    if (!tenantId) return;
+    if (!ready) return; // avoid writing during the restore pass
+    writeGardenView(tenantId, view);
+  }, [tenantId, view, ready]);
+
+  // ✅ prevents “designer flash”
+  if (!ready) {
+    return (
+      <div className="min-h-[60vh] w-full flex items-center justify-center text-black/40">
+        Cargando…
+      </div>
+    );
+    // or: return null; (if you prefer no placeholder)
+  }
 
   return (
     <GardenApp
       portal={portal}
       onBack={onBack}
       view={view}
-      onViewChange={setView} // ✅ fixes missing prop
+      onViewChange={(v) => {
+        setView(v);
+        if (tenantId) writeGardenView(tenantId, v);
+      }}
     />
   );
 }
@@ -68,4 +123,3 @@ export function isKnownApp(appId: string | null | undefined) {
   if (!appId) return false;
   return Boolean(APP_REGISTRY[appId]);
 }
-

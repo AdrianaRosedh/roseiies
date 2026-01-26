@@ -277,6 +277,79 @@ export default function CanvasStage(props: {
     hasSelection: props.selectedIds.length > 0,
   });
 
+    // ✅ Konva warm-up: prevents first interaction hitch (GPU + draw loop warm)
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+
+    let raf1 = 0;
+    let raf2 = 0;
+
+    raf1 = requestAnimationFrame(() => {
+      stage.batchDraw();
+      raf2 = requestAnimationFrame(() => stage.batchDraw());
+    });
+
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+    };
+  }, []);
+
+  // ✅ Image-only cache warm (rAF-scheduled):
+  // runs AFTER Konva commits images → avoids caching too early
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+  
+    const id = requestAnimationFrame(() => {
+      // Konva find() returns a Collection; use toArray() to stay TS-safe
+      const found: any = stage.find("Image");
+      const nodes: any[] =
+        typeof found?.toArray === "function"
+          ? found.toArray()
+          : Array.isArray(found)
+          ? found
+          : [];
+    
+      if (nodes.length === 0) return;
+    
+      let changed = false;
+    
+      for (const node of nodes) {
+        try {
+          // only cache once
+          if (node.getAttr?.("_roseiiesCached")) continue;
+        
+          const img = node.image?.();
+          if (!img) continue;
+        
+          // skip images that are not decoded yet
+          const w = (img as any).naturalWidth ?? (img as any).width ?? 0;
+          const h = (img as any).naturalHeight ?? (img as any).height ?? 0;
+          if (w === 0 || h === 0) continue;
+        
+          node.cache({ pixelRatio: 1 }); // safe, crisp, low memory
+          node.setAttr?.("_roseiiesCached", true);
+          changed = true;
+        } catch {
+          // ignore cache errors safely
+        }
+      }
+    
+      if (changed) stage.batchDraw();
+    });
+  
+    return () => cancelAnimationFrame(id);
+  }, [
+    // rerun when images resolve
+    textures.noiseImg,
+    textures.leafImg,
+    textures.soilImg,
+    treeImages,
+  ]);
+  
+
   const clampItemsToPlot = useCallback(
     (nextW: number, nextH: number) => {
       const margin = 10;
@@ -562,7 +635,7 @@ export default function CanvasStage(props: {
           </Layer>
 
           {/* ITEMS */}
-          <Layer>
+          <Layer perfectDrawEnabled={false}>
             {itemsSorted.map((item) => (
               <ItemNode
                 key={item.id}
