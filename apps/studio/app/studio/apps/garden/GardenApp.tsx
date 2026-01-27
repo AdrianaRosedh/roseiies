@@ -190,7 +190,12 @@ export default function GardenApp({
           ].join(" ")}
           aria-hidden={!showDesigner}
         >
-          <StudioShell module={GardenModule} store={store} portal={portal} onBack={onBack} />
+          <StudioShell
+            module={GardenModule}
+            store={store}
+            portal={portal}
+            onBack={onBack}
+          />
         </div>
       </div>
 

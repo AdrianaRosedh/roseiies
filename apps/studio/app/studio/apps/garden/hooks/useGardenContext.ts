@@ -1,7 +1,6 @@
-// apps/studio/app/studio/apps/garden/hooks/useGardenContext.ts
 "use client";
 
-import { useCallback, useRef } from "react";
+import { useCallback, useMemo, useRef } from "react";
 
 export type GardenContext = {
   workplaceId: string;
@@ -11,11 +10,13 @@ export type GardenContext = {
   areaName: string;
 };
 
-async function fetchGardenContext(areaName: string) {
-  const res = await fetch(
-    `/api/garden-context?workplaceSlug=olivea&areaName=${encodeURIComponent(areaName)}`,
-    { cache: "no-store" }
-  );
+async function fetchGardenContext(args: { areaName: string; layoutId?: string | null }) {
+  const qs = new URLSearchParams();
+  qs.set("workplaceSlug", "olivea");
+  qs.set("areaName", args.areaName);
+  if (args.layoutId) qs.set("layoutId", args.layoutId);
+
+  const res = await fetch(`/api/garden-context?${qs.toString()}`, { cache: "no-store" });
   const text = await res.text();
   const json = text ? JSON.parse(text) : null;
   if (!res.ok) throw new Error(json?.error ?? text ?? `garden-context failed (${res.status})`);
@@ -27,18 +28,21 @@ function safeAreaName(raw: string | null) {
   return s.length ? s : "Garden";
 }
 
-export function useGardenContext(args: { areaName: string | null }) {
-  const areaName = safeAreaName(args.areaName);
+export function useGardenContext(args: { areaName: string | null; layoutId?: string | null }) {
+  const areaName = useMemo(() => safeAreaName(args.areaName), [args.areaName]);
+  const layoutId = args.layoutId ?? null;
 
   const ctxRef = useRef<{ key: string; ctx: GardenContext } | null>(null);
 
   const getCtx = useCallback(async () => {
+    const key = `${areaName}::${layoutId ?? ""}`;
     const cached = ctxRef.current;
-    if (cached && cached.key === areaName) return cached.ctx;
-    const ctx = await fetchGardenContext(areaName);
-    ctxRef.current = { key: areaName, ctx };
+    if (cached && cached.key === key) return cached.ctx;
+
+    const ctx = await fetchGardenContext({ areaName, layoutId });
+    ctxRef.current = { key, ctx };
     return ctx;
-  }, [areaName]);
+  }, [areaName, layoutId]);
 
   return { areaName, getCtx };
 }
