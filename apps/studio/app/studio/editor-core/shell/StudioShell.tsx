@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import type { LayoutDoc, StudioModule, StudioItem } from "../types";
 import type { PortalContext } from "../../../lib/portal/getPortalContext";
 
@@ -69,9 +70,7 @@ export default function StudioShell(props: {
 
   // active garden/layout/doc
   const activeGarden = useMemo(
-    () =>
-      store.state.gardens.find((g: any) => g.id === store.state.activeGardenId) ??
-      null,
+    () => store.state.gardens.find((g: any) => g.id === store.state.activeGardenId) ?? null,
     [store.state]
   );
 
@@ -83,9 +82,7 @@ export default function StudioShell(props: {
   }, [store.state]);
 
   const activeLayout = useMemo(
-    () =>
-      store.state.layouts.find((l: any) => l.id === store.state.activeLayoutId) ??
-      null,
+    () => store.state.layouts.find((l: any) => l.id === store.state.activeLayoutId) ?? null,
     [store.state]
   );
 
@@ -123,7 +120,7 @@ export default function StudioShell(props: {
     store.updateItemsBatch?.(patches);
   }
 
-  // plantings feed (extracted)
+  // plantings feed
   const { plantings } = useRoseiiesPlantings({
     doc,
     portal,
@@ -132,7 +129,7 @@ export default function StudioShell(props: {
     workplaceSlug: "olivea",
   });
 
-  // arrange tools (extracted)
+  // arrange tools
   const {
     canArrange,
     canDistribute,
@@ -191,6 +188,14 @@ export default function StudioShell(props: {
   const leftW = leftOpen ? LEFT_OPEN_W : RAIL_W;
   const rightW = rightOpen ? RIGHT_OPEN_W : RAIL_W;
 
+  // ✅ TypeScript-safe spring transition for your framer-motion version
+  const spring = {
+    type: "spring" as const,
+    stiffness: 520,
+    damping: 42,
+    mass: 0.7,
+  };
+
   return (
     <div className="w-full h-dvh overflow-hidden flex flex-col">
       {/* Shared Garden topbar */}
@@ -235,36 +240,13 @@ export default function StudioShell(props: {
                 ),
               },
 
-              {
-                kind: "button",
-                label: "Reset",
-                onClick: () => store.resetView?.(),
-                tone: "ghost",
-              },
+              { kind: "button", label: "Reset", onClick: () => store.resetView?.(), tone: "ghost" },
 
               { kind: "separator" },
 
-              {
-                kind: "button",
-                label: "Copy",
-                onClick: () => store.copySelected?.(),
-                tone: "ghost",
-                disabled: !canCopy,
-              },
-              {
-                kind: "button",
-                label: "Paste",
-                onClick: () => store.pasteAtCursor?.(),
-                tone: "ghost",
-                disabled: !canPaste,
-              },
-              {
-                kind: "button",
-                label: "Delete",
-                onClick: () => store.deleteSelected?.(),
-                tone: "danger",
-                disabled: !canDelete,
-              },
+              { kind: "button", label: "Copy", onClick: () => store.copySelected?.(), tone: "ghost", disabled: !canCopy },
+              { kind: "button", label: "Paste", onClick: () => store.pasteAtCursor?.(), tone: "ghost", disabled: !canPaste },
+              { kind: "button", label: "Delete", onClick: () => store.deleteSelected?.(), tone: "danger", disabled: !canDelete },
             ]}
           />
         }
@@ -274,63 +256,70 @@ export default function StudioShell(props: {
         {/* Desktop */}
         <div className="hidden md:flex gap-3 mt-3 h-full overflow-hidden px-3 pb-3">
           {/* Left */}
-          <div
-            className="shrink-0 transition-[width] duration-300 ease-out"
-            style={{ width: leftW }}
-          >
+          <div className="shrink-0 transition-[width] duration-300 ease-out" style={{ width: leftW }}>
             <div className="h-full rounded-2xl border border-black/10 bg-white/60 shadow-sm backdrop-blur overflow-hidden">
-              {leftOpen ? (
-                <div className="h-full p-3 overflow-hidden flex flex-col">
-                  <PanelHeader
-                    title="Tools"
-                    side="left"
-                    onCollapse={() => setLeftOpen(false)}
-                  />
-                  <div className="pt-2 flex-1 overflow-auto">
-                    <LeftToolbar
-                      module={module}
-                      tool={store.tool}
-                      setTool={(t: any) => {
-                        if (t !== "tree") setTreePlacing(false);
-                        store.setTool(t);
-                      }}
-                      quickInsert={(t: any) => store.quickInsert?.(t)}
-                      treeVariant={store.treeVariant}
-                      setTreeVariant={store.setTreeVariant}
-                      treePlacing={treePlacing}
-                      setTreePlacing={setTreePlacing}
-                      canDuplicate={canDuplicate}
-                      canLock={canLock}
-                      canDelete={canDeleteAction}
-                      isLockedSelection={anyLocked}
-                      onDuplicate={onDuplicate}
-                      onToggleLock={onToggleLock}
-                      onDelete={store.deleteSelected}
-                      showGrid={showGrid}
-                      setShowGrid={setShowGrid}
-                      snapToGrid={snapToGrid}
-                      setSnapToGrid={setSnapToGrid}
-                      canReorder={canReorder}
-                      onBringForward={bringForward}
-                      onSendBackward={sendBackward}
-                      onBringToFront={bringToFront}
-                      onSendToBack={sendToBack}
-                      canArrange={canArrange}
-                      canDistribute={canDistribute}
-                      alignTo={alignTo}
-                      setAlignTo={setAlignTo}
-                      onAlign={alignSelected}
-                      onDistribute={distributeSelected}
-                    />
-                  </div>
-                </div>
-              ) : (
-                <CollapsedRail
-                  side="left"
-                  title="Tools"
-                  onExpand={() => setLeftOpen(true)}
-                />
-              )}
+              <AnimatePresence initial={false} mode="wait">
+                {leftOpen ? (
+                  <motion.div
+                    key="left-open"
+                    className="h-full p-3 overflow-hidden flex flex-col"
+                    initial={{ opacity: 0, x: -8, filter: "blur(8px)" }}
+                    animate={{ opacity: 1, x: 0, filter: "blur(0px)" }}
+                    exit={{ opacity: 0, x: -8, filter: "blur(8px)" }}
+                    transition={spring}
+                  >
+                    <PanelHeader title="Tools" side="left" onCollapse={() => setLeftOpen(false)} />
+                    <div className="pt-2 flex-1 overflow-y-auto no-scrollbar overscroll-contain">
+                      <LeftToolbar
+                        module={module}
+                        tool={store.tool}
+                        setTool={(t: any) => {
+                          if (t !== "tree") setTreePlacing(false);
+                          store.setTool(t);
+                        }}
+                        quickInsert={(t: any) => store.quickInsert?.(t)}
+                        treeVariant={store.treeVariant}
+                        setTreeVariant={store.setTreeVariant}
+                        treePlacing={treePlacing}
+                        setTreePlacing={setTreePlacing}
+                        canDuplicate={canDuplicate}
+                        canLock={canLock}
+                        canDelete={canDeleteAction}
+                        isLockedSelection={anyLocked}
+                        onDuplicate={onDuplicate}
+                        onToggleLock={onToggleLock}
+                        onDelete={store.deleteSelected}
+                        showGrid={showGrid}
+                        setShowGrid={setShowGrid}
+                        snapToGrid={snapToGrid}
+                        setSnapToGrid={setSnapToGrid}
+                        canReorder={canReorder}
+                        onBringForward={bringForward}
+                        onSendBackward={sendBackward}
+                        onBringToFront={bringToFront}
+                        onSendToBack={sendToBack}
+                        canArrange={canArrange}
+                        canDistribute={canDistribute}
+                        alignTo={alignTo}
+                        setAlignTo={setAlignTo}
+                        onAlign={alignSelected}
+                        onDistribute={distributeSelected}
+                      />
+                    </div>
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="left-rail"
+                    className="h-full"
+                    initial={{ opacity: 0, x: -8, filter: "blur(8px)" }}
+                    animate={{ opacity: 1, x: 0, filter: "blur(0px)" }}
+                    exit={{ opacity: 0, x: -8, filter: "blur(8px)" }}
+                    transition={spring}
+                  >
+                    <CollapsedRail side="left" title="Tools" onExpand={() => setLeftOpen(true)} />
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           </div>
 
@@ -340,38 +329,45 @@ export default function StudioShell(props: {
           </div>
 
           {/* Right */}
-          <div
-            className="shrink-0 transition-[width] duration-300 ease-out"
-            style={{ width: rightW }}
-          >
+          <div className="shrink-0 transition-[width] duration-300 ease-out" style={{ width: rightW }}>
             <div className="h-full rounded-2xl border border-black/10 bg-white/60 shadow-sm backdrop-blur overflow-hidden">
-              {rightOpen ? (
-                <div className="h-full p-3 overflow-hidden flex flex-col">
-                  <PanelHeader
-                    title="Inspector"
-                    side="right"
-                    onCollapse={() => setRightOpen(false)}
-                  />
-                  <div className="pt-2 flex-1 overflow-auto">
-                    <Inspector
-                      module={module}
-                      selectedIds={store.selectedIds}
-                      selected={store.selected}
-                      selectedItems={store.selectedItems}
-                      onUpdateItem={store.updateItem}
-                      onUpdateMeta={store.updateMeta}
-                      onUpdateStyle={store.updateStyle}
-                      plantings={plantings}
-                    />
-                  </div>
-                </div>
-              ) : (
-                <CollapsedRail
-                  side="right"
-                  title="Inspector"
-                  onExpand={() => setRightOpen(true)}
-                />
-              )}
+              <AnimatePresence initial={false} mode="wait">
+                {rightOpen ? (
+                  <motion.div
+                    key="right-open"
+                    className="h-full p-3 overflow-hidden flex flex-col"
+                    initial={{ opacity: 0, x: 8, filter: "blur(8px)" }}
+                    animate={{ opacity: 1, x: 0, filter: "blur(0px)" }}
+                    exit={{ opacity: 0, x: 8, filter: "blur(8px)" }}
+                    transition={spring}
+                  >
+                    <PanelHeader title="Inspector" side="right" onCollapse={() => setRightOpen(false)} />
+                    <div className="pt-2 flex-1 overflow-y-auto no-scrollbar overscroll-contain">
+                      <Inspector
+                        module={module}
+                        selectedIds={store.selectedIds}
+                        selected={store.selected}
+                        selectedItems={store.selectedItems}
+                        onUpdateItem={store.updateItem}
+                        onUpdateMeta={store.updateMeta}
+                        onUpdateStyle={store.updateStyle}
+                        plantings={plantings}
+                      />
+                    </div>
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="right-rail"
+                    className="h-full"
+                    initial={{ opacity: 0, x: 8, filter: "blur(8px)" }}
+                    animate={{ opacity: 1, x: 0, filter: "blur(0px)" }}
+                    exit={{ opacity: 0, x: 8, filter: "blur(8px)" }}
+                    transition={spring}
+                  >
+                    <CollapsedRail side="right" title="Inspector" onExpand={() => setRightOpen(true)} />
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           </div>
         </div>

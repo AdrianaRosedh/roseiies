@@ -13,6 +13,39 @@ import { useStableLoading } from "@/app/studio/editor-core/shell/hooks/useStable
 import { useGardenContext } from "../hooks/useGardenContext";
 import { useGardenDashboardMetrics } from "./hooks/useGardenDashboardMetrics";
 
+function LivePill(props: { state: "connecting" | "live" | "offline" }) {
+  const { state } = props;
+
+  const label = state === "live" ? "Live" : state === "connecting" ? "Connecting" : "Offline";
+  const dotClass =
+    state === "live"
+      ? "bg-emerald-500 animate-pulse"
+      : state === "connecting"
+        ? "bg-amber-500"
+        : "bg-black/35";
+
+  const textClass =
+    state === "live"
+      ? "text-emerald-700/80"
+      : state === "connecting"
+        ? "text-amber-700/80"
+        : "text-black/50";
+
+  return (
+    <span
+      className={[
+        "inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-2 text-xs shadow-sm",
+        "transition-all duration-300",
+        textClass,
+      ].join(" ")}
+      title="Realtime status"
+    >
+      <span className={["h-2 w-2 rounded-full", dotClass].join(" ")} />
+      {label}
+    </span>
+  );
+}
+
 export default function GardenDashboard(props: {
   store: any;
   portal: any;
@@ -22,7 +55,6 @@ export default function GardenDashboard(props: {
 }) {
   const tenantId = String(props.portal?.tenantId ?? "");
 
-  // UI label (what the user calls this garden)
   const displayGardenName = useMemo(() => {
     const s = props.store?.state;
     if (!s) return "Garden";
@@ -30,16 +62,12 @@ export default function GardenDashboard(props: {
     return g?.name ?? "Garden";
   }, [props.store?.state]);
 
-  // ✅ DB area name (what exists in roseiies.areas.name)
-  // Sheets already uses "Garden" as the areaName; keep Dashboard consistent.
   const dbAreaName = "Garden";
-
-  // ✅ IMPORTANT: fetch context using DB areaName, not the UI display name
   const { areaName, getCtx } = useGardenContext({ areaName: dbAreaName });
 
-  const { loading, error, refresh } = useGardenDashboardMetrics({
+  const { metrics, loading, error, liveState } = useGardenDashboardMetrics({
     tenantId,
-    areaName, // will be "Garden"
+    areaName,
     getCtx,
   });
 
@@ -65,19 +93,10 @@ export default function GardenDashboard(props: {
               { kind: "button", label: "Sheets", onClick: props.onGoSheets, tone: "ghost" },
               { kind: "separator" },
 
-              ...(stableLoading
-                ? [{ kind: "text", value: "Updating…", tone: "muted" } as const]
-                : []),
+              // If your toolbar supports nodes:
+              { kind: "node", node: <LivePill state={liveState} /> },
 
-              {
-                kind: "button",
-                label: "Refresh",
-                onClick: refresh,
-                tone: "primary",
-                disabled: loading,
-                title: "Refresh dashboard metrics",
-              },
-
+              ...(stableLoading ? [{ kind: "text", value: "Updating…", tone: "muted" } as const] : []),
               ...(error ? [{ kind: "text", value: error, tone: "danger" } as const] : []),
             ]}
           />
@@ -86,8 +105,7 @@ export default function GardenDashboard(props: {
 
       <div className="flex-1 min-h-0 overflow-hidden">
         <DashboardView>
-          {/* ✅ Panels should also query using DB area name */}
-          <GardenDashboardPanels tenantId={tenantId} areaName={dbAreaName} />
+          <GardenDashboardPanels metrics={metrics} />
         </DashboardView>
       </div>
     </div>

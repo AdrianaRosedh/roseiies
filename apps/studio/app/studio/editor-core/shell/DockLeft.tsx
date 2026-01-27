@@ -1,7 +1,9 @@
+// apps/studio/app/studio/editor-core/shell/DockLeft.tsx
 "use client";
 
 import React, { useMemo } from "react";
 import { Home, Settings, ChevronRight } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 
 export type ShellNavItem = {
   key: string;
@@ -25,8 +27,6 @@ function renderIcon(icon: any, args: { active: boolean }) {
     ),
   };
 
-  // ✅ Lucide icons are often forwardRef objects ({ $$typeof, render })
-  // They must be rendered as a component type, NOT as a React child.
   if (icon && (typeof icon === "function" || typeof icon === "object")) {
     if (React.isValidElement(icon)) {
       return React.cloneElement(icon as any, {
@@ -101,7 +101,6 @@ export default function DockLeft(props: {
   return (
     <aside
       className={cn(
-        // ✅ NEVER show DockLeft on mobile/tablet
         "hidden lg:flex",
         "h-dvh sticky top-0 z-20 flex-col",
         "border-r border-black/10 bg-white/70 backdrop-blur",
@@ -177,12 +176,19 @@ export default function DockLeft(props: {
               )}
               title={it.label}
             >
-              <div
-                className={cn(
-                  "absolute left-2 top-1/2 -translate-y-1/2 h-5 w-px rounded-full transition-opacity",
-                  active ? "opacity-100 bg-rose-600" : "opacity-0"
-                )}
-              />
+              {/* ✅ Framer Motion sliding indicator */}
+              {active ? (
+                <motion.div
+                  layoutId="dock-left-indicator"
+                  className="absolute left-2 top-1/2 -translate-y-1/2 h-5 w-px rounded-full bg-rose-600"
+                  transition={{
+                    type: "spring",
+                    stiffness: 550,
+                    damping: 38,
+                    mass: 0.7,
+                  }}
+                />
+              ) : null}
 
               <div className="w-6 h-6 flex items-center justify-center">
                 {renderIcon(it.icon, { active })}
@@ -206,9 +212,7 @@ export default function DockLeft(props: {
       {/* Footer */}
       <div className="p-2 border-t border-black/10 space-y-2">
         {props.expanded && props.bottomHint ? (
-          <div className="px-2 text-[11px] text-black/45 leading-snug">
-            {props.bottomHint}
-          </div>
+          <div className="px-2 text-[11px] text-black/45 leading-snug">{props.bottomHint}</div>
         ) : null}
 
         <div className="space-y-1">
@@ -273,9 +277,7 @@ export default function DockLeft(props: {
                 <div className="text-xs font-semibold text-black/75 truncate">
                   {props.userName ?? "Settings"}
                 </div>
-                <div className="text-[11px] text-black/45 truncate">
-                  Preferences & access
-                </div>
+                <div className="text-[11px] text-black/45 truncate">Preferences & access</div>
               </div>
             ) : null}
           </button>

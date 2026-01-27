@@ -1,3 +1,4 @@
+// apps/studio/app/studio/editor-core/canvas/CanvasStage.tsx
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -19,12 +20,12 @@ import { useCanvasShortcuts } from "./hooks/useCanvasShortcuts";
 import { useItemsIndex } from "./hooks/useItemsIndex";
 
 import PlotControls from "./components/PlotControls";
-import PlotHud from "./components/PlotHud";
 import StageBackground from "./components/StageBackground";
 import PlotSurface from "./components/PlotSurface";
 import Grid from "./components/Grid";
 import PlotResizeHandle from "./components/PlotResizeHandle";
 import FloatingToolbar from "./components/FloatingToolbar/FloatingToolbar";
+import CanvasOverlays from "./components/CanvasOverlays";
 
 import ItemNode from "./item/ItemNode";
 
@@ -107,7 +108,6 @@ export default function CanvasStage(props: {
 
   plantings?: PlantingRow[];
 
-  // optional: bump this whenever the store changes selection or items batch-update
   selectionVersion?: number;
 }) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -179,7 +179,6 @@ export default function CanvasStage(props: {
   const treeImages = useTreeImages();
   const textures = useTextures({ stagePos: props.stagePos });
 
-  // repaint when textures/images resolve
   useEffect(() => {
     stageRef.current?.batchDraw();
   }, [textures.soilImg, treeImages]);
@@ -205,7 +204,7 @@ export default function CanvasStage(props: {
     items: props.doc.items,
     stagePos: props.stagePos,
     stageScale: props.stageScale,
-    selectionVersion: props.selectionVersion, // ✅ IMPORTANT
+    selectionVersion: props.selectionVersion,
   });
 
   const cursorRef = useRef<string>("default");
@@ -277,7 +276,6 @@ export default function CanvasStage(props: {
     hasSelection: props.selectedIds.length > 0,
   });
 
-    // ✅ Konva warm-up: prevents first interaction hitch (GPU + draw loop warm)
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
@@ -296,14 +294,11 @@ export default function CanvasStage(props: {
     };
   }, []);
 
-  // ✅ Image-only cache warm (rAF-scheduled):
-  // runs AFTER Konva commits images → avoids caching too early
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
-  
+
     const id = requestAnimationFrame(() => {
-      // Konva find() returns a Collection; use toArray() to stay TS-safe
       const found: any = stage.find("Image");
       const nodes: any[] =
         typeof found?.toArray === "function"
@@ -311,44 +306,33 @@ export default function CanvasStage(props: {
           : Array.isArray(found)
           ? found
           : [];
-    
+
       if (nodes.length === 0) return;
-    
+
       let changed = false;
-    
+
       for (const node of nodes) {
         try {
-          // only cache once
           if (node.getAttr?.("_roseiiesCached")) continue;
-        
+
           const img = node.image?.();
           if (!img) continue;
-        
-          // skip images that are not decoded yet
+
           const w = (img as any).naturalWidth ?? (img as any).width ?? 0;
           const h = (img as any).naturalHeight ?? (img as any).height ?? 0;
           if (w === 0 || h === 0) continue;
-        
-          node.cache({ pixelRatio: 1 }); // safe, crisp, low memory
+
+          node.cache({ pixelRatio: 1 });
           node.setAttr?.("_roseiiesCached", true);
           changed = true;
-        } catch {
-          // ignore cache errors safely
-        }
+        } catch {}
       }
-    
+
       if (changed) stage.batchDraw();
     });
-  
+
     return () => cancelAnimationFrame(id);
-  }, [
-    // rerun when images resolve
-    textures.noiseImg,
-    textures.leafImg,
-    textures.soilImg,
-    treeImages,
-  ]);
-  
+  }, [textures.noiseImg, textures.leafImg, textures.soilImg, treeImages]);
 
   const clampItemsToPlot = useCallback(
     (nextW: number, nextH: number) => {
@@ -458,12 +442,12 @@ export default function CanvasStage(props: {
     editMode === "corners"
       ? "Corners"
       : editMode === "polygon"
-        ? "Polygon"
-        : editMode === "curvature"
-          ? "Curvature"
-          : editMode === "bezier"
-            ? "Bezier"
-            : "Edit";
+      ? "Polygon"
+      : editMode === "curvature"
+      ? "Curvature"
+      : editMode === "bezier"
+      ? "Bezier"
+      : "Edit";
 
   const canRadius = Boolean(single) && isRectLike(single!) && !hasBezier(single!) && !hasCurvature(single!) && !hasPolygon(single!);
   const canConvert = Boolean(single) && !anyLocked && !isSingleTree;
@@ -477,7 +461,6 @@ export default function CanvasStage(props: {
     return { x: round(props.cursorWorld.x), y: round(props.cursorWorld.y) };
   }, [showSnapGuides, props.cursorWorld, snapStep]);
 
-  // viewport culling for plantings
   const viewRect = useMemo(() => {
     const tl = camera.worldFromScreen({ x: 0, y: 0 });
     const br = camera.worldFromScreen({ x: stageSize.w, y: stageSize.h });
@@ -517,7 +500,8 @@ export default function CanvasStage(props: {
 
   const showLabels = props.stageScale >= 0.9;
   const LABEL_MAX = 220;
-  const isMulti = props.selectedIds.length > 1;
+
+  const toolbarVisible = Boolean(selectionUI.toolbarBox);
 
   return (
     <section
@@ -542,8 +526,21 @@ export default function CanvasStage(props: {
         setConstrainView={setConstrainView}
       />
 
-      <PlotHud itemsCount={props.doc.items.length} selectedCount={props.selectedIds.length} />
+      {/* ✅ Single global HUD (tool + zoom). No selection card while toolbar is visible. */}
+      <CanvasOverlays
+        tool={String(props.tool)}
+        panMode={props.panMode}
+        placeMode={props.treePlacing ? ({ tool: "tree" } as any) : null}
+        stageScale={props.stageScale}
+        selectionBox={selectionUI.toolbarBox}
+        itemsCount={props.doc.items.length}
+        selectedCount={props.selectedIds.length}
+        selectedLabel={single?.label ?? null}
+        selectedType={single?.type ?? null}
+        showSelectionCard={!toolbarVisible}
+      />
 
+      {/* ✅ Contextual toolbar (the only popup near selection) */}
       {selectionUI.toolbarBox ? (
         <FloatingToolbar
           box={selectionUI.toolbarBox}
@@ -648,7 +645,7 @@ export default function CanvasStage(props: {
                 treeImages={treeImages}
                 soilImg={textures.soilImg ?? null}
                 panMode={props.panMode}
-                multiSelect={props.selectedIds.length > 1} 
+                multiSelect={props.selectedIds.length > 1}
                 setWrapCursor={setWrapCursor}
                 onRegister={(node: Konva.Node | null) => {
                   if (node) nodeMapRef.current.set(item.id, node);
@@ -656,13 +653,13 @@ export default function CanvasStage(props: {
                 }}
                 onSelect={(evt: { shiftKey: boolean }) => {
                   if (!evt.shiftKey) return props.setSelectedIds([item.id]);
-                
+
                   const current = selectedIdsRef.current;
                   const set = new Set(current);
-                
+
                   if (set.has(item.id)) set.delete(item.id);
                   else set.add(item.id);
-                
+
                   props.setSelectedIds(Array.from(set));
                 }}
                 onCommit={(patch: Partial<StudioItem>) => {
@@ -674,9 +671,8 @@ export default function CanvasStage(props: {
               />
             ))}
           </Layer>
-          
 
-          {/* ✅ PLANTINGS (own top-level layer; no nested Layer) */}
+          {/* PLANTINGS */}
           <Layer listening={false} perfectDrawEnabled={false}>
             {visiblePlantings.map((v, idx) => (
               <React.Fragment key={v.p.id}>
@@ -710,7 +706,7 @@ export default function CanvasStage(props: {
             {props.selectedIds.length > 1 ? (
               <Transformer
                 ref={trRef}
-                rotateEnabled={false} // ✅ no rotate knob for multi
+                rotateEnabled={false}
                 keepRatio={false}
                 padding={6}
                 borderStroke="rgba(111, 102, 255, 0.35)"
@@ -720,14 +716,13 @@ export default function CanvasStage(props: {
                 anchorStroke="rgba(111, 102, 255, 0.55)"
                 anchorStrokeWidth={1.2}
                 anchorFill="rgba(255,255,255,0.98)"
-                centeredScaling={false} // ✅ not symmetric
-                enabledAnchors={["top-left", "top-right", "bottom-left", "bottom-right"]} // ✅ 4 corners only
+                centeredScaling={false}
+                enabledAnchors={["top-left", "top-right", "bottom-left", "bottom-right"]}
                 shouldOverdrawWholeArea={true}
                 onTransform={() => selectionUI.updateSelectionUIRaf()}
                 onTransformEnd={() => selectionUI.updateSelectionUIRaf()}
               />
             ) : null}
-            
 
             {editPlot ? (
               <PlotResizeHandle

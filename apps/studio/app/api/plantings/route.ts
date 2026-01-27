@@ -275,7 +275,7 @@ export async function GET(req: Request) {
   // - gardenName (old) => areaName (new)
   const areaName = (url.searchParams.get("areaName") ?? url.searchParams.get("gardenName") ?? "Garden").trim();
   const workplaceSlug = (url.searchParams.get("workplaceSlug") ?? "olivea").trim();
-  const layoutId = url.searchParams.get("layoutId");
+  const layoutId = url.searchParams.get("layoutId") ?? url.searchParams.get("layout_id");
 
   const { ctx, error: cerr } = await resolveContext({ supabase, workplaceSlug, areaName, layoutId });
   if (!ctx) return Response.json({ error: cerr ?? "Missing context" }, { status: 404 });

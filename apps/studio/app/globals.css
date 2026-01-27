@@ -34,3 +34,12 @@
     rgba(237,236,232,0.55)
   );
 }
+
+/* Hide scrollbars but keep scrolling (premium) */
+.no-scrollbar {
+  scrollbar-width: none;        /* Firefox */
+  -ms-overflow-style: none;     /* IE/Edge legacy */
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;                /* Chrome/Safari */
+}
