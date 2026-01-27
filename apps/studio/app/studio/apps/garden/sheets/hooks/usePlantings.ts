@@ -231,7 +231,6 @@ export function usePlantings(args: { gardenName: string | null; tenantId: string
     [areaName, getCtx, refresh]
   );
 
-
   const patch = useCallback(
     async (id: string, patchObj: Partial<PlantingRow>) => {
       // optimistic

@@ -1,10 +1,14 @@
 // apps/studio/app/studio/apps/garden/sheets/grid/GridSurface.tsx
 "use client";
 
-import React, { useRef } from "react";
+import React from "react";
 import type { Column, PlantingRow } from "../types";
 import type { GridStore } from "./store";
 import { pillClass } from "../types";
+
+function cn(...xs: Array<string | false | null | undefined>) {
+  return xs.filter(Boolean).join(" ");
+}
 
 export default function GridSurface(props: {
   store: GridStore;
@@ -21,6 +25,12 @@ export default function GridSurface(props: {
 
   // commit current edit before switching
   commitActiveEditIfAny: () => Promise<boolean>;
+
+  // ✅ new: bottom-left add row focuses first cell
+  onAddRowFocusFirstCell: (args: { el: HTMLDivElement }) => void;
+
+  // ✅ new: width for the add-column trailing cell so row layout matches header
+  addColWidth: number;
 }) {
   const {
     store,
@@ -33,9 +43,10 @@ export default function GridSurface(props: {
     beginEdit,
     onRowBackgroundClick,
     commitActiveEditIfAny,
+    onAddRowFocusFirstCell,
+    addColWidth,
   } = props;
 
-  const containerRef = useRef<HTMLDivElement | null>(null);
   const selected = store.getState().selected;
 
   function renderDisplay(rowId: string, col: Column, row: PlantingRow | null) {
@@ -47,7 +58,11 @@ export default function GridSurface(props: {
           ? (getCellValue("__new__", "bed_id", null) ?? null)
           : row?.bed_id ?? null;
       const txt = raw ? itemLabel(raw) : "";
-      return txt ? <span className="text-black/80 truncate">{txt}</span> : <span className="text-black/30">—</span>;
+      return txt ? (
+        <span className="text-black/80 truncate">{txt}</span>
+      ) : (
+        <span className="text-black/30">—</span>
+      );
     }
 
     const v = getCellValue(rowId, key, row);
@@ -64,7 +79,6 @@ export default function GridSurface(props: {
     return <span className="text-black/80 truncate">{String(v)}</span>;
   }
 
-  // helper: open editor for a given cell with a known element/rect
   async function openCellEdit(args: {
     rowId: string;
     colKey: string;
@@ -73,36 +87,69 @@ export default function GridSurface(props: {
   }) {
     const { rowId, colKey, row, el } = args;
 
-    // capture rect BEFORE any await
     const rect = el.getBoundingClientRect();
     const value = getCellValue(rowId, colKey, row);
 
     store.setActive(true);
     store.select({ rowId, colKey });
 
-    // commit current edit first (Airtable behavior)
     const ok = await commitActiveEditIfAny();
     if (!ok) return;
 
-    // start edit next frame using the captured rect
     requestAnimationFrame(() => {
       beginEdit({ rowId, colKey, value, anchorRect: rect });
     });
   }
 
+  const gutterW = 44;
+
   return (
-    <div ref={containerRef} className="max-h-[70vh] overflow-auto">
-      {rows.map(({ id, row, isDraft }) => {
-        const isSelected = selectedRowId === id && !isDraft;
+    <div className="min-w-max">
+      {rows.map(({ id, row, isDraft }, idx) => {
+        const isSelectedRow = selectedRowId === id && !isDraft;
 
         return (
           <div
             key={id}
-            className={`flex border-b border-black/5 last:border-b-0 ${
-              isDraft ? "bg-white/20" : isSelected ? "bg-black/3" : ""
-            }`}
+            className={cn(
+              "flex border-b border-black/5 last:border-b-0",
+              isDraft ? "bg-black/1.5" : isSelectedRow ? "bg-black/3" : "bg-white"
+            )}
             onMouseDown={() => onRowBackgroundClick(row)}
           >
+            {/* row gutter */}
+            <div
+              className={cn(
+                "shrink-0 flex items-center justify-center border-r border-black/5",
+                isDraft ? "bg-black/2" : "bg-black/1.5"
+              )}
+              style={{ width: gutterW }}
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                if (isDraft) return;
+                onRowBackgroundClick(row);
+              }}
+              title={isDraft ? "Add row" : "Row"}
+            >
+              {isDraft ? (
+                <div
+                  className="h-7 w-7 rounded-lg border border-black/10 bg-white/80 hover:bg-white flex items-center justify-center text-sm text-black/70 cursor-pointer"
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    const el = e.currentTarget as HTMLDivElement;
+                    onAddRowFocusFirstCell({ el });
+                  }}
+                >
+                  +
+                </div>
+              ) : (
+                <span className={cn("text-xs", isSelectedRow ? "text-black/70" : "text-black/35")}>
+                  {idx + 1}
+                </span>
+              )}
+            </div>
+
+            {/* cells */}
             {cols.map((c, i) => {
               const colKey = String(c.key);
               const cellSelected = selected?.rowId === id && selected?.colKey === colKey;
@@ -111,17 +158,14 @@ export default function GridSurface(props: {
                 <div
                   key={`${id}_${colKey}`}
                   data-cell="1"
-                  className={`px-3 py-2 text-sm border-r border-black/5 last:border-r-0 cursor-text select-none ${
-                    cellSelected ? " outline-2 outline-black/15" : ""
-                  }`}
+                  className={cn(
+                    "px-3 py-2 text-sm border-r border-black/5 last:border-r-0 cursor-text select-none",
+                    cellSelected && "ring-2 ring-black/10"
+                  )}
                   style={{ width: widths[i] }}
                   onMouseDown={(e) => {
                     e.stopPropagation();
-
-                    // capture element synchronously
                     const el = e.currentTarget as HTMLDivElement;
-
-                    // DO NOT use async event object after awaiting
                     void openCellEdit({ rowId: id, colKey, row, el });
                   }}
                 >
@@ -130,27 +174,11 @@ export default function GridSurface(props: {
               );
             })}
 
-            {/* Airtable-like add row control */}
-            {isDraft ? (
-              <button
-                className="px-3 py-2 text-xs text-black/45 hover:text-black/80"
-                onMouseDown={(e) => {
-                  e.stopPropagation();
-                  // Focus the first column (Crop) on the new row
-                  const firstColKey = String(cols[0]?.key ?? "crop");
-                  const rowId = "__new__";
-                  const el = (e.currentTarget as HTMLButtonElement)
-                    .parentElement?.querySelector?.(`[data-cell="1"]`) as HTMLDivElement | null;
-
-                  if (el) {
-                    void openCellEdit({ rowId, colKey: firstColKey, row: null, el });
-                  }
-                }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                + Add planting
-              </button>
-            ) : null}
+            {/* trailing spacer column (aligns with header + column button) */}
+            <div
+              className="shrink-0 border-l border-black/0"
+              style={{ width: addColWidth }}
+            />
           </div>
         );
       })}

@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { tbBtn } from "../../../../editor-core/shell/components/toolbarStyles";
 
 export default function GardenSheetsToolbar(props: {
   loading: boolean;
@@ -24,10 +25,7 @@ export default function GardenSheetsToolbar(props: {
   return (
     <>
       {onGoDesign ? (
-        <button
-          onClick={onGoDesign}
-          className="rounded-lg border border-black/10 bg-white/70 px-3 py-2 text-sm hover:bg-white"
-        >
+        <button onClick={onGoDesign} className={tbBtn("ghost")}>
           Map
         </button>
       ) : null}
@@ -35,7 +33,7 @@ export default function GardenSheetsToolbar(props: {
       {onDeleteSelected ? (
         <button
           onClick={onDeleteSelected}
-          className="rounded-lg border border-black/10 bg-white/70 px-3 py-2 text-sm hover:bg-white"
+          className={tbBtn("ghost")}
           title="Delete selected"
         >
           Trash
@@ -44,16 +42,13 @@ export default function GardenSheetsToolbar(props: {
 
       <button
         onClick={() => onAddColumn()}
-        className="rounded-lg border border-black/10 bg-white/70 px-3 py-2 text-sm hover:bg-white"
+        className={tbBtn("ghost")}
         title="Add a column"
       >
         + Column
       </button>
 
-      <button
-        onClick={() => onRefresh()}
-        className="rounded-lg border border-black/10 bg-white/70 px-3 py-2 text-sm hover:bg-white"
-      >
+      <button onClick={() => onRefresh()} className={tbBtn("ghost")}>
         {loading ? "Refreshing…" : "Refresh"}
       </button>
 

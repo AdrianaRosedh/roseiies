@@ -29,7 +29,6 @@ export default function AppShell(props: {
   watermarkText?: string;
 }) {
   const [expanded, setExpanded] = React.useState(Boolean(props.dockDefaultExpanded));
-
   const dockRef = useRef<HTMLDivElement | null>(null);
 
   // ✅ Click outside closes the dock (only when expanded)
@@ -39,11 +38,7 @@ export default function AppShell(props: {
     function onDown(e: MouseEvent) {
       const target = e.target as Node | null;
       if (!target) return;
-
-      // If click is inside the dock, ignore
       if (dockRef.current?.contains(target)) return;
-
-      // Otherwise close
       setExpanded(false);
     }
 
@@ -53,26 +48,23 @@ export default function AppShell(props: {
 
   return (
     <div className="w-full h-dvh overflow-hidden flex bg-[#fbfbfb]">
-      <div ref={dockRef}>
+      {/* Desktop dock only (DockLeft already self-hides on mobile now) */}
+      <div className="hidden lg:block" ref={dockRef}>
         <DockLeft
           navItems={props.navItems}
           activeKey={props.activeKey}
           onChange={props.onChange}
           expanded={expanded}
           setExpanded={setExpanded}
-
           onGoWorkplace={props.onGoWorkplace}
           onOpenSettings={props.onOpenSettings}
-
           brandMarkSrc={props.brandMarkSrc}
           brandWordmarkSrc={props.brandWordmarkSrc}
           brandLabel={props.brandLabel}
-
           workspaceName={props.workspaceName}
           workspaceLogoSrc={props.workspaceLogoSrc}
           userName={props.userName}
           userAvatarSrc={props.userAvatarSrc}
-
           bottomHint={props.bottomHint}
         />
       </div>

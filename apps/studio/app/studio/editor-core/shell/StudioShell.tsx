@@ -14,7 +14,8 @@ import PanelHeader from "./desktop/PanelHeader";
 import CollapsedRail from "./desktop/CollapsedRail";
 
 import GardenAppHeader from "../../apps/garden/components/GardenAppHeader";
-import GardenMapToolbar from "../../apps/garden/components/GardenMapToolbar";
+import GardenMapToolbar, { GardenMapActions } from "../../apps/garden/components/GardenMapToolbar";
+
 
 import { useViewportLock } from "./hooks/useViewportLock";
 import { useRoseiiesPlantings } from "./hooks/useRoseiiesPlantings";
@@ -191,22 +192,30 @@ export default function StudioShell(props: {
           Keep TopBar here (Map view). Your TopBar can render AppTopBar internally,
           which makes Map + Sheets uniform without adding AppTopBar inside StudioShell. */}
       <GardenAppHeader
-        sectionLabel={activeGarden?.name ?? "Garden"}
+        sectionLabel={null}
         viewLabel="Map"
+        onGoWorkplace={onBack}
         subLeft={
           <GardenMapToolbar
             state={store.state}
             activeGarden={activeGarden}
             layoutsForGarden={layoutsForGarden}
             activeLayout={activeLayout}
-            stageScale={store.stageScale ?? 1}
             onBack={onBack}
-            onSetGarden={(id) => store.setActiveGardenId?.(id)}
-            onSetLayout={(id) => store.setActiveLayoutId?.(id)}
-            onNewGarden={(name) => store.createGarden?.(name)}
-            onRenameGarden={(name) => store.renameGarden?.(name)}
-            onNewLayout={(name) => store.createLayout?.(name)}
-            onRenameLayout={(name) => store.renameLayout?.(name)}
+            onSetGarden={(id: string) => store.setActiveGardenId?.(id)}
+            onSetLayout={(id: string) => store.setActiveLayoutId?.(id)}
+          />
+        }
+        subRight={
+          <GardenMapActions
+            state={store.state}
+            activeGarden={activeGarden}
+            activeLayout={activeLayout}
+            stageScale={store.stageScale ?? 1}
+            onNewGarden={(name: string) => store.createGarden?.(name)}
+            onRenameGarden={(name: string) => store.renameGarden?.(name)}
+            onNewLayout={(name: string) => store.createLayout?.(name)}
+            onRenameLayout={(name: string) => store.renameLayout?.(name)}
             onPublish={() => store.publishActiveLayout?.({ portal })}
             onResetView={() => store.resetView?.()}
             onCopy={() => store.copySelected?.()}
@@ -218,6 +227,7 @@ export default function StudioShell(props: {
           />
         }
       />
+
 
       <div className="flex-1 overflow-hidden">
         {/* Desktop */}

@@ -11,6 +11,17 @@ export default function MobileSheet(props: {
 }) {
   const { open, title, onClose, children, heightClassName } = props;
 
+  // Keep mounted long enough to animate closed
+  const [present, setPresent] = React.useState(open);
+
+  React.useEffect(() => {
+    if (open) setPresent(true);
+    else {
+      const t = window.setTimeout(() => setPresent(false), 220);
+      return () => window.clearTimeout(t);
+    }
+  }, [open]);
+
   React.useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -20,16 +31,16 @@ export default function MobileSheet(props: {
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
-  if (!open) return null;
+  if (!present) return null;
 
   return (
     <div className="fixed inset-0 z-80">
-      {/* Backdrop */}
+      {/* ✅ NO overlay / blur — just a transparent click-catcher */}
       <button
         type="button"
         aria-label="Close"
         onClick={onClose}
-        className="absolute inset-0 bg-black/30 backdrop-blur-[2px]"
+        className="absolute inset-0 bg-transparent"
       />
 
       {/* Sheet */}
@@ -38,6 +49,9 @@ export default function MobileSheet(props: {
           "absolute inset-x-0 bottom-0",
           "rounded-t-3xl border border-black/10 bg-white/95 shadow-2xl backdrop-blur",
           heightClassName ?? "h-[70dvh]",
+          // ✅ smooth motion
+          "transition-all duration-200 ease-out",
+          open ? "translate-y-0 opacity-100" : "translate-y-3 opacity-0",
         ].join(" ")}
         role="dialog"
         aria-modal="true"
@@ -52,7 +66,7 @@ export default function MobileSheet(props: {
           <button
             type="button"
             onClick={onClose}
-            className="rounded-full px-3 py-1 text-sm text-black/70 hover:bg-black/5"
+            className="rounded-full px-3 py-1 text-sm text-black/70 hover:bg-black/5 transition"
           >
             Close
           </button>

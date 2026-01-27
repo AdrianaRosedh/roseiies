@@ -28,7 +28,6 @@ function renderIcon(icon: any, args: { active: boolean }) {
   // ✅ Lucide icons are often forwardRef objects ({ $$typeof, render })
   // They must be rendered as a component type, NOT as a React child.
   if (icon && (typeof icon === "function" || typeof icon === "object")) {
-    // If it's already an element (<Icon />)
     if (React.isValidElement(icon)) {
       return React.cloneElement(icon as any, {
         ...common,
@@ -37,12 +36,10 @@ function renderIcon(icon: any, args: { active: boolean }) {
       });
     }
 
-    // Otherwise treat it as a component type (works for forwardRef objects)
     const Icon = icon as React.ComponentType<any>;
     return <Icon {...common} />;
   }
 
-  // fallback
   return (
     <div
       className={cn(
@@ -63,16 +60,13 @@ export default function DockLeft(props: {
   expanded: boolean;
   setExpanded: (v: boolean) => void;
 
-  // navigation
   onGoWorkplace?: () => void;
   onOpenSettings?: () => void;
 
-  // branding
-  brandMarkSrc?: string; // collapsed only
-  brandWordmarkSrc?: string; // expanded only
-  brandLabel?: string; // fallback if wordmark missing
+  brandMarkSrc?: string;
+  brandWordmarkSrc?: string;
+  brandLabel?: string;
 
-  // footer
   workspaceName?: string;
   workspaceLogoSrc?: string;
   userName?: string;
@@ -82,13 +76,6 @@ export default function DockLeft(props: {
 }) {
   const items = useMemo(() => props.navItems ?? [], [props.navItems]);
 
-  /**
-   * Rule:
-   * - Buttons/logo ALWAYS act first (never toggle dock).
-   * - Clicking empty dock background toggles:
-   *    collapsed -> expand
-   *    expanded  -> collapse
-   */
   function onDockPointerDownCapture(e: React.PointerEvent) {
     const target = e.target as HTMLElement | null;
     if (!target) return;
@@ -114,7 +101,9 @@ export default function DockLeft(props: {
   return (
     <aside
       className={cn(
-        "h-dvh sticky top-0 z-20 flex flex-col",
+        // ✅ NEVER show DockLeft on mobile/tablet
+        "hidden lg:flex",
+        "h-dvh sticky top-0 z-20 flex-col",
         "border-r border-black/10 bg-white/70 backdrop-blur",
         "transition-[width] duration-200 ease-out",
         props.expanded ? "w-60" : "w-18"
@@ -137,7 +126,6 @@ export default function DockLeft(props: {
           {!props.expanded ? (
             <div className="h-10 w-10 flex items-center justify-center overflow-hidden">
               {props.brandMarkSrc ? (
-                // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={props.brandMarkSrc}
                   alt="Roseiies"
@@ -153,7 +141,6 @@ export default function DockLeft(props: {
           {props.expanded ? (
             <div className="min-w-0 flex items-center gap-2">
               {props.brandWordmarkSrc ? (
-                // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={props.brandWordmarkSrc}
                   alt="Roseiies"
@@ -166,7 +153,6 @@ export default function DockLeft(props: {
                 </div>
               )}
 
-              {/* subtle affordance */}
               <ChevronRight className="ml-auto text-black/30" size={18} strokeWidth={1.5} />
             </div>
           ) : null}
@@ -187,13 +173,10 @@ export default function DockLeft(props: {
               className={cn(
                 "group w-full flex items-center gap-3 px-3 py-2",
                 "relative transition-colors",
-                active
-                  ? "text-black"
-                  : "text-black/60 hover:text-black/80"
-              )}              
+                active ? "text-black" : "text-black/60 hover:text-black/80"
+              )}
               title={it.label}
             >
-              {/* active accent bar */}
               <div
                 className={cn(
                   "absolute left-2 top-1/2 -translate-y-1/2 h-5 w-px rounded-full transition-opacity",
@@ -203,7 +186,7 @@ export default function DockLeft(props: {
 
               <div className="w-6 h-6 flex items-center justify-center">
                 {renderIcon(it.icon, { active })}
-              </div>           
+              </div>
 
               {props.expanded ? (
                 <div
@@ -229,7 +212,6 @@ export default function DockLeft(props: {
         ) : null}
 
         <div className="space-y-1">
-          {/* Workplace */}
           <button
             type="button"
             data-dock-interactive="true"
@@ -242,7 +224,6 @@ export default function DockLeft(props: {
           >
             <div className="h-9 w-9 rounded-2xl bg-black/5 flex items-center justify-center overflow-hidden">
               {props.workspaceLogoSrc ? (
-                // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={props.workspaceLogoSrc}
                   alt={props.workspaceName ?? "Workplace"}
@@ -259,14 +240,11 @@ export default function DockLeft(props: {
                 <div className="text-xs font-semibold text-black/75 truncate">
                   {props.workspaceName ?? "Workplace"}
                 </div>
-                <div className="text-[11px] text-black/45 truncate">
-                  Back to workspace
-                </div>
+                <div className="text-[11px] text-black/45 truncate">Back to workspace</div>
               </div>
             ) : null}
           </button>
 
-          {/* Settings / User */}
           <button
             type="button"
             data-dock-interactive="true"
@@ -279,7 +257,6 @@ export default function DockLeft(props: {
           >
             <div className="h-9 w-9 rounded-2xl bg-black/5 flex items-center justify-center overflow-hidden">
               {props.userAvatarSrc ? (
-                // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={props.userAvatarSrc}
                   alt={props.userName ?? "User"}

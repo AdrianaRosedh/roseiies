@@ -1,4 +1,3 @@
-// apps/studio/app/studio/editor-core/canvas/item/render/ItemBody.tsx
 "use client";
 
 import React from "react";
@@ -21,7 +20,7 @@ export default function ItemBody(props: {
   stroke: string;
   shadowColor: string;
 
-  soilImg?: HTMLImageElement | null;
+  soilImg?: HTMLImageElement | null; // kept for signature compatibility, but no longer used
   treeImg?: HTMLImageElement;
 
   rectCornerRadius: any;
@@ -29,16 +28,15 @@ export default function ItemBody(props: {
   draftCurv: CurvaturePath | null;
   draftPoly: PolygonPath | null;
 }) {
-  const { item, isSelected, rectRef, fill, stroke, shadowColor, soilImg, treeImg, rectCornerRadius } = props;
+  const { item, isSelected, rectRef, fill, stroke, treeImg, rectCornerRadius } = props;
 
   const s = item.style;
-  const shadow = s.shadow;
-
-  const isBed = item.type === "bed";
-
   const showBezier = Boolean(item.meta.bezier);
   const showCurv = Boolean(props.draftCurv ?? item.meta.curvature);
   const showPoly = Boolean(props.draftPoly ?? item.meta.polygon);
+
+  const strokeCol = isSelected ? "rgba(15,23,42,0.35)" : stroke;
+  const strokeW = isSelected ? 1.8 : (s.strokeWidth ?? 1.2);
 
   return (
     <>
@@ -46,56 +44,51 @@ export default function ItemBody(props: {
         <BezierShape
           item={item}
           fill={fill}
-          stroke={isSelected ? "rgba(15,23,42,0.28)" : stroke}
-          strokeWidth={isSelected ? 1.4 : s.strokeWidth}
-          shadowColor={shadowColor}
-          shadowBlur={shadow?.blur ?? 10}
-          shadowOffsetX={shadow?.offsetX ?? 0}
-          shadowOffsetY={shadow?.offsetY ?? 10}
+          stroke={strokeCol}
+          strokeWidth={strokeW}
+          shadowColor={"rgba(0,0,0,0)"} // ✅ no shadows
+          shadowBlur={0}
+          shadowOffsetX={0}
+          shadowOffsetY={0}
         />
       ) : showCurv ? (
         <CurvatureShape
           item={item}
           path={(props.draftCurv ?? item.meta.curvature)!}
           fill={fill}
-          stroke={isSelected ? "rgba(15,23,42,0.28)" : stroke}
-          strokeWidth={isSelected ? 1.4 : s.strokeWidth}
-          shadowColor={shadowColor}
-          shadowBlur={shadow?.blur ?? 10}
-          shadowOffsetX={shadow?.offsetX ?? 0}
-          shadowOffsetY={shadow?.offsetY ?? 10}
+          stroke={strokeCol}
+          strokeWidth={strokeW}
+          shadowColor={"rgba(0,0,0,0)"} // ✅ no shadows
+          shadowBlur={0}
+          shadowOffsetX={0}
+          shadowOffsetY={0}
         />
       ) : showPoly ? (
         <PolygonShape
           item={item}
           path={(props.draftPoly ?? item.meta.polygon)!}
           fill={fill}
-          stroke={isSelected ? "rgba(15,23,42,0.28)" : stroke}
-          strokeWidth={isSelected ? 1.4 : s.strokeWidth}
-          shadowColor={shadowColor}
-          shadowBlur={shadow?.blur ?? 10}
-          shadowOffsetX={shadow?.offsetX ?? 0}
-          shadowOffsetY={shadow?.offsetY ?? 10}
+          stroke={strokeCol}
+          strokeWidth={strokeW}
+          shadowColor={"rgba(0,0,0,0)"} // ✅ no shadows
+          shadowBlur={0}
+          shadowOffsetX={0}
+          shadowOffsetY={0}
         />
       ) : isPillLike(item) ? (
         <Rect
           width={item.w}
           height={item.h}
           fill={fill}
-          stroke={isSelected ? "rgba(15,23,42,0.28)" : stroke}
-          strokeWidth={isSelected ? 1.4 : s.strokeWidth}
+          stroke={strokeCol}
+          strokeWidth={strokeW}
           cornerRadius={Math.min(item.w, item.h) / 2}
-          shadowColor={shadowColor}
-          shadowBlur={shadow?.blur ?? 10}
-          shadowOpacity={0.35}
-          shadowOffsetX={shadow?.offsetX ?? 0}
-          shadowOffsetY={shadow?.offsetY ?? 10}
-          shadowEnabled
+          shadowEnabled={false}
           perfectDrawEnabled={false}
         />
       ) : isRectLike(item) ? (
         <Group>
-          {/* ✅ HIT TARGET (ensures beds/rects always clickable) */}
+          {/* ✅ HIT TARGET */}
           <Rect
             x={0}
             y={0}
@@ -106,70 +99,33 @@ export default function ItemBody(props: {
             perfectDrawEnabled={false}
           />
 
-          {/* AO shadow */}
-          <Rect
-            x={2.5}
-            y={3.5}
-            width={item.w - 5}
-            height={item.h - 5}
-            cornerRadius={rectCornerRadius}
-            fill="rgba(0,0,0,0.22)"
-            opacity={0.18}
-            listening={false}
-            perfectDrawEnabled={false}
-          />
-
+          {/* ✅ Flat rect (beds no longer use soil textures or AO shadow layers) */}
           <Rect
             ref={rectRef}
             width={item.w}
             height={item.h}
             cornerRadius={rectCornerRadius}
-            fill={isBed ? undefined : fill}
-            fillPatternImage={isBed ? (soilImg ?? undefined) : undefined}
-            fillPatternRepeat={isBed ? "repeat" : undefined}
-            fillPatternScale={isBed ? { x: 0.55, y: 0.55 } : undefined}
-            stroke={isSelected ? "rgba(15,23,42,0.22)" : stroke}
-            strokeWidth={isSelected ? 1.4 : s.strokeWidth}
-            shadowColor={shadowColor}
-            shadowBlur={shadow?.blur ?? 10}
-            shadowOpacity={0.32}
-            shadowOffsetX={shadow?.offsetX ?? 0}
-            shadowOffsetY={shadow?.offsetY ?? 10}
-            shadowEnabled
+            fill={fill}
+            stroke={strokeCol}
+            strokeWidth={strokeW}
+            shadowEnabled={false}
             perfectDrawEnabled={false}
           />
 
-          {isBed ? (
+          {/* ✅ Minimal inner highlight when selected (cheap + clear) */}
+          {isSelected ? (
             <Rect
-              width={item.w}
-              height={item.h}
+              x={1}
+              y={1}
+              width={Math.max(0, item.w - 2)}
+              height={Math.max(0, item.h - 2)}
               cornerRadius={rectCornerRadius}
-              fillLinearGradientStartPoint={{ x: 0, y: 0 }}
-              fillLinearGradientEndPoint={{ x: 0, y: item.h }}
-              fillLinearGradientColorStops={[
-                0,
-                "rgba(255,255,255,0.10)",
-                0.5,
-                "rgba(255,255,255,0.02)",
-                1,
-                "rgba(0,0,0,0.18)",
-              ]}
-              opacity={0.6}
+              stroke="rgba(255,255,255,0.55)"
+              strokeWidth={1}
               listening={false}
               perfectDrawEnabled={false}
             />
           ) : null}
-
-          {/* highlight stroke */}
-          <Rect
-            width={item.w}
-            height={item.h}
-            cornerRadius={rectCornerRadius}
-            stroke="rgba(255,255,255,0.30)"
-            strokeWidth={1.6}
-            listening={false}
-            perfectDrawEnabled={false}
-          />
         </Group>
       ) : isTree(item) ? (
         <Group>
@@ -184,7 +140,14 @@ export default function ItemBody(props: {
             perfectDrawEnabled={false}
           />
           {treeImg ? (
-            <KonvaImage x={0} y={0} width={item.w} height={item.h} image={treeImg} listening={false} />
+            <KonvaImage
+              x={0}
+              y={0}
+              width={item.w}
+              height={item.h}
+              image={treeImg}
+              listening={false}
+            />
           ) : null}
         </Group>
       ) : (

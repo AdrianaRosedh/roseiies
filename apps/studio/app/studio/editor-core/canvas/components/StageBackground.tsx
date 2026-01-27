@@ -1,3 +1,4 @@
+// apps/studio/app/studio/editor-core/canvas/components/StageBackground.tsx
 "use client";
 
 import React, { useMemo } from "react";
@@ -27,6 +28,7 @@ export default function StageBackground(props: {
     const left = -stagePos.x / s;
     const top = -stagePos.y / s;
 
+    // big pad so background always fills viewport even when panning
     const pad = Math.max(vw, vh) * 0.8;
 
     return {
@@ -41,18 +43,24 @@ export default function StageBackground(props: {
     };
   }, [stagePos.x, stagePos.y, stageScale, stageSize.w, stageSize.h]);
 
+  // Match AppShell background (Sheets blank space):
+  // AppShell uses bg-[#fbfbfb] :contentReference[oaicite:2]{index=2}
+  const BASE = "rgba(251,251,251,1)"; // #fbfbfb
+
   return (
     <>
+      {/* Base */}
       <Rect
         x={view.x}
         y={view.y}
         width={view.w}
         height={view.h}
-        fill="rgba(238,233,225,1)"
+        fill={BASE}
         listening={false}
         perfectDrawEnabled={false}
       />
 
+      {/* Very subtle vignette (kept cool/neutral so it doesn't warm the page) */}
       <Rect
         x={view.x}
         y={view.y}
@@ -64,15 +72,16 @@ export default function StageBackground(props: {
         fillRadialGradientEndRadius={view.r1}
         fillRadialGradientColorStops={[
           0,
-          "rgba(255,255,255,0.10)",
+          "rgba(255,255,255,0.08)",
           1,
-          "rgba(0,0,0,0.06)",
+          "rgba(0,0,0,0.045)",
         ]}
-        opacity={0.55}
+        opacity={0.42}
         listening={false}
         perfectDrawEnabled={false}
       />
 
+      {/* Optional noise (kept extremely low to avoid tinting) */}
       {props.noiseImg ? (
         <Rect
           x={view.x}
@@ -82,7 +91,7 @@ export default function StageBackground(props: {
           fillPatternImage={props.noiseImg}
           fillPatternRepeat="repeat"
           fillPatternOffset={props.noiseOffset}
-          opacity={0.045}
+          opacity={0.03}
           listening={false}
           perfectDrawEnabled={false}
         />

@@ -8,23 +8,26 @@ import GardenSheetsErrorBoundary from "./sheets/components/GardenSheetsErrorBoun
 import GardenAppHeader from "./components/GardenAppHeader";
 import GardenSheetsToolbar from "./sheets/components/GardenSheetsToolbar";
 import GardenSheetsGrid from "./sheets/components/GardenSheetsGrid";
+import GardenSheetsMobileList from "./sheets/components/GardenSheetsMobileList";
 
 import { useGardenSheetCells } from "./sheets/hooks/useGardenSheetCells";
 import { useGardenSheetColumns } from "./sheets/hooks/useGardenSheetColumns";
 import { usePlantings } from "./sheets/hooks/usePlantings";
 import { useGardenSheetsModel } from "./sheets/hooks/useGardenSheetsModel";
 
-
+import { tbBtn } from "../../editor-core/shell/components/toolbarStyles";
 import type { Column } from "./sheets/types";
 
 export default function GardenSheets({
   store,
   portal,
   onGoDesign,
+  onBack,
 }: {
   store: any;
   portal: PortalContext;
   onGoDesign?: () => void;
+  onBack?: () => void;
 }) {
   if (!portal || !portal.tenantId) {
     return (
@@ -52,7 +55,12 @@ export default function GardenSheets({
 
   return (
     <GardenSheetsErrorBoundary>
-      <GardenSheetsInner store={store} portal={portal} onGoDesign={onGoDesign} />
+      <GardenSheetsInner
+        store={store}
+        portal={portal}
+        onGoDesign={onGoDesign}
+        onBack={onBack}
+      />
     </GardenSheetsErrorBoundary>
   );
 }
@@ -61,24 +69,22 @@ function GardenSheetsInner({
   store,
   portal,
   onGoDesign,
+  onBack,
 }: {
   store: any;
   portal: PortalContext;
   onGoDesign?: () => void;
+  onBack?: () => void;
 }) {
   const activeGarden = useMemo(
     () =>
-      store.state.gardens.find((g: any) => g.id === store.state.activeGardenId) ?? null,
+      store.state.gardens.find((g: any) => g.id === store.state.activeGardenId) ??
+      null,
     [store.state]
   );
 
-  // Legacy selection (Studio store)
   const gardenId = activeGarden?.id ?? null;
-
-  // ✅ DB Area is the physical area: "Garden" (seeded in roseiies.areas).
   const areaName = "Garden";
-
-  // Display label can remain the Studio garden name.
   const displayGardenName = (activeGarden?.name ?? areaName).trim();
 
   if (!gardenId) {
@@ -113,7 +119,10 @@ function GardenSheetsInner({
     () => items.filter((it: any) => it.type === "bed" || it.type === "tree"),
     [items]
   );
-  const bedsOnly = useMemo(() => items.filter((it: any) => it.type === "bed"), [items]);
+  const bedsOnly = useMemo(
+    () => items.filter((it: any) => it.type === "bed"),
+    [items]
+  );
 
   const defaultCols: Column[] = useMemo(
     () => [
@@ -161,10 +170,6 @@ function GardenSheetsInner({
     bedsOnly,
   });
 
-  /* -------------------------------------------------------
-     Airtable-like delete UX (soft delete + toast undo)
-  ------------------------------------------------------- */
-
   const [undoToast, setUndoToast] = useState<{ id: string } | null>(null);
   const undoTimerRef = useRef<number | null>(null);
 
@@ -186,7 +191,6 @@ function GardenSheetsInner({
     undoTimerRef.current = null;
   };
 
-  // Toolbar delete handler (TS-safe)
   const onDeleteSelected = useMemo(() => {
     const id = model.selectedRowId;
     if (!id) return undefined;
@@ -194,7 +198,6 @@ function GardenSheetsInner({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [model.selectedRowId]);
 
-  // Keyboard shortcuts: Delete/Backspace => delete selected row; Cmd/Ctrl+Z => undo toast
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
@@ -226,7 +229,6 @@ function GardenSheetsInner({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [model.selectedRowId, undoToast?.id]);
 
-  // Cleanup timer on unmount
   useEffect(() => {
     return () => {
       if (undoTimerRef.current) window.clearTimeout(undoTimerRef.current);
@@ -234,28 +236,22 @@ function GardenSheetsInner({
   }, []);
 
   return (
-    <div className="w-full h-dvh overflow-hidden flex flex-col">
-      {/* header (your GardenAppHeader or toolbar) */}
+    // ✅ IMPORTANT: use h-full so GardenApp can control mobile bottom padding cleanly
+    <div className="w-full h-full overflow-hidden flex flex-col">
       <GardenAppHeader
-        sectionLabel={displayGardenName}
+        sectionLabel={null}
         viewLabel="Sheets"
-        statusLine={
-          plantings.lastError ? (
-            <span className="text-rose-700/80">{plantings.lastError}</span>
-          ) : null
-        }
+        onGoWorkplace={onBack}
         subLeft={
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              className="rounded-lg border border-black/10 bg-white/70 px-3 py-2 text-sm hover:bg-white"
-              title="View"
-            >
+            <button type="button" className={tbBtn("ghost")} title="View">
               Main view ▾
             </button>
-        
+
             <div className="hidden lg:flex items-center gap-2 text-xs text-black/45">
               <span>Plantings</span>
+              <span className="text-black/25">•</span>
+              <span className="truncate">{displayGardenName}</span>
             </div>
           </div>
         }
@@ -270,10 +266,10 @@ function GardenSheetsInner({
           />
         }
       />
-      
-      {/* ✅ match Map shell spacing + framing */}
+
       <div className="flex-1 min-h-0 overflow-hidden">
-        <div className="hidden md:flex gap-3 h-full overflow-hidden px-3 pb-3">
+        {/* Desktop: match Map spacing exactly (mt-3 + px-3 pb-3) */}
+        <div className="hidden md:flex gap-3 mt-3 h-full overflow-hidden px-3 pb-3">
           <div className="flex-1 rounded-2xl border border-black/10 bg-white/40 shadow-sm overflow-hidden">
             <GardenSheetsGrid
               cols={cols}
@@ -287,29 +283,33 @@ function GardenSheetsInner({
               getCellValue={model.getCellValue}
               commitCell={model.commitCell}
               getRowById={model.getRowById}
+              onAddColumn={addColumn}
             />
           </div>
         </div>
 
-        {/* optional: mobile can stay simple for now */}
-        <div className="md:hidden">
-          <GardenSheetsGrid
-            cols={cols}
-            rows={model.displayRows}
-            bedsAndTrees={bedsAndTrees}
-            zonesForBed={model.zonesForBed}
-            getActiveBedIdForRow={model.getActiveBedIdForRow}
-            selectedRowId={model.selectedRowId}
-            onRowClick={model.onRowClick}
-            itemLabel={model.itemLabel}
-            getCellValue={model.getCellValue}
-            commitCell={model.commitCell}
-            getRowById={model.getRowById}
-          />
+        {/* Mobile: also give it the same "frame" spacing so it matches Map */}
+        <div className="md:hidden h-full overflow-hidden">
+          <div className="mt-3 h-full overflow-hidden px-3 pb-3">
+            <div className="h-full rounded-2xl border border-black/10 bg-white/40 shadow-sm overflow-hidden">
+              <GardenSheetsMobileList
+                cols={cols}
+                rows={model.displayRows}
+                bedsAndTrees={bedsAndTrees}
+                zonesForBed={model.zonesForBed}
+                selectedRowId={model.selectedRowId}
+                onRowClick={model.onRowClick}
+                itemLabel={model.itemLabel}
+                getCellValue={model.getCellValue}
+                commitCell={model.commitCell}
+                onAddColumn={addColumn}
+              />
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* keep your undo toast as-is */}
+      {/* keep your undo toast as-is (wherever you render it) */}
     </div>
   );
 }
