@@ -1,10 +1,10 @@
+// apps/studio/app/studio/editor-core/shell/StudioShell.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
 import type { LayoutDoc, StudioModule, StudioItem } from "../types";
 import type { PortalContext } from "../../../lib/portal/getPortalContext";
 
-import TopBar from "../TopBar";
 import LeftToolbar from "../LeftToolbar";
 import Inspector from "../Inspector";
 import CanvasStage from "../canvas";
@@ -14,8 +14,9 @@ import PanelHeader from "./desktop/PanelHeader";
 import CollapsedRail from "./desktop/CollapsedRail";
 
 import GardenAppHeader from "../../apps/garden/components/GardenAppHeader";
-import GardenMapToolbar, { GardenMapActions } from "../../apps/garden/components/GardenMapToolbar";
+import GardenMapToolbar from "../../apps/garden/components/GardenMapToolbar";
 
+import AppSectionToolbar from "./components/AppSectionToolbar";
 
 import { useViewportLock } from "./hooks/useViewportLock";
 import { useRoseiiesPlantings } from "./hooks/useRoseiiesPlantings";
@@ -68,7 +69,9 @@ export default function StudioShell(props: {
 
   // active garden/layout/doc
   const activeGarden = useMemo(
-    () => store.state.gardens.find((g: any) => g.id === store.state.activeGardenId) ?? null,
+    () =>
+      store.state.gardens.find((g: any) => g.id === store.state.activeGardenId) ??
+      null,
     [store.state]
   );
 
@@ -80,7 +83,9 @@ export default function StudioShell(props: {
   }, [store.state]);
 
   const activeLayout = useMemo(
-    () => store.state.layouts.find((l: any) => l.id === store.state.activeLayoutId) ?? null,
+    () =>
+      store.state.layouts.find((l: any) => l.id === store.state.activeLayoutId) ??
+      null,
     [store.state]
   );
 
@@ -188,9 +193,7 @@ export default function StudioShell(props: {
 
   return (
     <div className="w-full h-dvh overflow-hidden flex flex-col">
-      {/* IMPORTANT:
-          Keep TopBar here (Map view). Your TopBar can render AppTopBar internally,
-          which makes Map + Sheets uniform without adding AppTopBar inside StudioShell. */}
+      {/* Shared Garden topbar */}
       <GardenAppHeader
         sectionLabel={null}
         viewLabel="Map"
@@ -207,37 +210,82 @@ export default function StudioShell(props: {
           />
         }
         subRight={
-          <GardenMapActions
-            state={store.state}
-            activeGarden={activeGarden}
-            activeLayout={activeLayout}
-            stageScale={store.stageScale ?? 1}
-            onNewGarden={(name: string) => store.createGarden?.(name)}
-            onRenameGarden={(name: string) => store.renameGarden?.(name)}
-            onNewLayout={(name: string) => store.createLayout?.(name)}
-            onRenameLayout={(name: string) => store.renameLayout?.(name)}
-            onPublish={() => store.publishActiveLayout?.({ portal })}
-            onResetView={() => store.resetView?.()}
-            onCopy={() => store.copySelected?.()}
-            onPaste={() => store.pasteAtCursor?.()}
-            onDelete={() => store.deleteSelected?.()}
-            canCopy={canCopy}
-            canPaste={canPaste}
-            canDelete={canDelete}
+          <AppSectionToolbar
+            actions={[
+              {
+                kind: "button",
+                label: activeLayout?.published ? "Publish ●" : "Publish",
+                onClick: () => store.publishActiveLayout?.({ portal }),
+                tone: "primary",
+                disabled: !activeLayout,
+                title: "Publish this layout",
+              },
+
+              { kind: "separator" },
+
+              {
+                kind: "node",
+                node: (
+                  <span
+                    className="rounded-full border border-black/10 bg-white px-3 py-2 text-xs text-black/70 shadow-sm"
+                    title="Zoom"
+                  >
+                    Zoom: {Math.round((store.stageScale ?? 1) * 100)}%
+                  </span>
+                ),
+              },
+
+              {
+                kind: "button",
+                label: "Reset",
+                onClick: () => store.resetView?.(),
+                tone: "ghost",
+              },
+
+              { kind: "separator" },
+
+              {
+                kind: "button",
+                label: "Copy",
+                onClick: () => store.copySelected?.(),
+                tone: "ghost",
+                disabled: !canCopy,
+              },
+              {
+                kind: "button",
+                label: "Paste",
+                onClick: () => store.pasteAtCursor?.(),
+                tone: "ghost",
+                disabled: !canPaste,
+              },
+              {
+                kind: "button",
+                label: "Delete",
+                onClick: () => store.deleteSelected?.(),
+                tone: "danger",
+                disabled: !canDelete,
+              },
+            ]}
           />
         }
       />
-
 
       <div className="flex-1 overflow-hidden">
         {/* Desktop */}
         <div className="hidden md:flex gap-3 mt-3 h-full overflow-hidden px-3 pb-3">
           {/* Left */}
-          <div className="shrink-0 transition-[width] duration-300 ease-out" style={{ width: leftW }}>
+          <div
+            className="shrink-0 transition-[width] duration-300 ease-out"
+            style={{ width: leftW }}
+          >
             <div className="h-full rounded-2xl border border-black/10 bg-white/60 shadow-sm backdrop-blur overflow-hidden">
               {leftOpen ? (
                 <div className="h-full p-3 overflow-hidden flex flex-col">
-                  <PanelHeader title="Tools" side="left" onCollapse={() => setLeftOpen(false)} />
+                  <PanelHeader
+                    title="Tools"
+                    side="left"
+                    onCollapse={() => setLeftOpen(false)}
+                  />
                   <div className="pt-2 flex-1 overflow-auto">
                     <LeftToolbar
                       module={module}
@@ -277,7 +325,11 @@ export default function StudioShell(props: {
                   </div>
                 </div>
               ) : (
-                <CollapsedRail side="left" title="Tools" onExpand={() => setLeftOpen(true)} />
+                <CollapsedRail
+                  side="left"
+                  title="Tools"
+                  onExpand={() => setLeftOpen(true)}
+                />
               )}
             </div>
           </div>
@@ -288,11 +340,18 @@ export default function StudioShell(props: {
           </div>
 
           {/* Right */}
-          <div className="shrink-0 transition-[width] duration-300 ease-out" style={{ width: rightW }}>
+          <div
+            className="shrink-0 transition-[width] duration-300 ease-out"
+            style={{ width: rightW }}
+          >
             <div className="h-full rounded-2xl border border-black/10 bg-white/60 shadow-sm backdrop-blur overflow-hidden">
               {rightOpen ? (
                 <div className="h-full p-3 overflow-hidden flex flex-col">
-                  <PanelHeader title="Inspector" side="right" onCollapse={() => setRightOpen(false)} />
+                  <PanelHeader
+                    title="Inspector"
+                    side="right"
+                    onCollapse={() => setRightOpen(false)}
+                  />
                   <div className="pt-2 flex-1 overflow-auto">
                     <Inspector
                       module={module}
@@ -307,7 +366,11 @@ export default function StudioShell(props: {
                   </div>
                 </div>
               ) : (
-                <CollapsedRail side="right" title="Inspector" onExpand={() => setRightOpen(true)} />
+                <CollapsedRail
+                  side="right"
+                  title="Inspector"
+                  onExpand={() => setRightOpen(true)}
+                />
               )}
             </div>
           </div>

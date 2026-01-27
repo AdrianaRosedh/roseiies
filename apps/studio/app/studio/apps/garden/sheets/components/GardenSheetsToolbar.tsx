@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { tbBtn } from "../../../../editor-core/shell/components/toolbarStyles";
+import AppSectionToolbar from "@/app/studio/editor-core/shell/components/AppSectionToolbar";
 
 export default function GardenSheetsToolbar(props: {
   loading: boolean;
@@ -13,50 +13,49 @@ export default function GardenSheetsToolbar(props: {
   onGoDesign?: () => void;
   onDeleteSelected?: (() => void) | undefined;
 }) {
-  const {
-    loading,
-    lastError,
-    onRefresh,
-    onAddColumn,
-    onGoDesign,
-    onDeleteSelected,
-  } = props;
-
   return (
-    <>
-      {onGoDesign ? (
-        <button onClick={onGoDesign} className={tbBtn("ghost")}>
-          Map
-        </button>
-      ) : null}
+    <AppSectionToolbar
+      actions={[
+        ...(props.onGoDesign
+          ? [{ kind: "button", label: "Map", onClick: props.onGoDesign, tone: "ghost" } as const]
+          : []),
 
-      {onDeleteSelected ? (
-        <button
-          onClick={onDeleteSelected}
-          className={tbBtn("ghost")}
-          title="Delete selected"
-        >
-          Trash
-        </button>
-      ) : null}
+        ...(props.onDeleteSelected
+          ? [
+              {
+                kind: "button",
+                label: "Trash",
+                onClick: props.onDeleteSelected,
+                tone: "ghost",
+                title: "Delete selected",
+              } as const,
+            ]
+          : []),
 
-      <button
-        onClick={() => onAddColumn()}
-        className={tbBtn("ghost")}
-        title="Add a column"
-      >
-        + Column
-      </button>
+        {
+          kind: "button",
+          label: "+ Column",
+          onClick: () => props.onAddColumn(),
+          tone: "ghost",
+          title: "Add a column",
+        },
 
-      <button onClick={() => onRefresh()} className={tbBtn("ghost")}>
-        {loading ? "Refreshing…" : "Refresh"}
-      </button>
+        { kind: "separator" },
 
-      {lastError ? (
-        <span className="ml-2 text-xs text-rose-700/80 truncate max-w-[40vw]">
-          {lastError}
-        </span>
-      ) : null}
-    </>
+        {
+          kind: "button",
+          label: "Refresh",
+          onClick: () => props.onRefresh(),
+          tone: "ghost",
+          disabled: props.loading,
+          title: "Refresh rows",
+        },
+      ]}
+      status={{
+        loading: props.loading,
+        error: props.lastError,
+        loadingText: "Updating…",
+      }}
+    />
   );
 }

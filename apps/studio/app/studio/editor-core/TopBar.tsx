@@ -123,9 +123,8 @@ export default function TopBar(props: {
   return (
     <div className="w-full">
       {/* Mobile */}
-      <div className="md:hidden">
+      <div className="md:hidden"> 
         <AppTopBar
-          compact
           appLabel={appLabel}
           viewLabel={viewLabel}
           sectionLabel={sectionLabel}

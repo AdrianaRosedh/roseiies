@@ -1,0 +1,1047 @@
+[
+  {
+    "schema_json": {
+      "enums": [
+        {
+          "name": "care_event_type",
+          "values": [
+            "watering",
+            "compost",
+            "fertilize",
+            "prune",
+            "labor",
+            "other"
+          ]
+        },
+        {
+          "name": "issue_event_type",
+          "values": [
+            "pest",
+            "disease",
+            "frost",
+            "heat",
+            "wind",
+            "nutrient",
+            "other"
+          ]
+        },
+        {
+          "name": "planting_status",
+          "values": [
+            "planned",
+            "active",
+            "harvested",
+            "failed",
+            "archived"
+          ]
+        }
+      ],
+      "schema": "roseiies",
+      "tables": [
+        {
+          "name": "areas",
+          "columns": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "default": "gen_random_uuid()",
+              "nullable": false
+            },
+            {
+              "name": "workplace_id",
+              "type": "uuid",
+              "default": null,
+              "nullable": false
+            },
+            {
+              "name": "name",
+              "type": "text",
+              "default": null,
+              "nullable": false
+            },
+            {
+              "name": "kind",
+              "type": "text",
+              "default": "'garden'::text",
+              "nullable": false
+            },
+            {
+              "name": "notes",
+              "type": "text",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "default": "now()",
+              "nullable": false
+            },
+            {
+              "name": "updated_at",
+              "type": "timestamp with time zone",
+              "default": "now()",
+              "nullable": false
+            }
+          ]
+        },
+        {
+          "name": "assets",
+          "columns": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "default": "gen_random_uuid()",
+              "nullable": false
+            },
+            {
+              "name": "workplace_id",
+              "type": "uuid",
+              "default": null,
+              "nullable": false
+            },
+            {
+              "name": "area_id",
+              "type": "uuid",
+              "default": null,
+              "nullable": false
+            },
+            {
+              "name": "layout_id",
+              "type": "uuid",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "type",
+              "type": "text",
+              "default": null,
+              "nullable": false
+            },
+            {
+              "name": "name",
+              "type": "text",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "tags",
+              "type": "ARRAY",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "geom",
+              "type": "jsonb",
+              "default": "'{}'::jsonb",
+              "nullable": false
+            },
+            {
+              "name": "style",
+              "type": "jsonb",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "default": "now()",
+              "nullable": false
+            },
+            {
+              "name": "updated_at",
+              "type": "timestamp with time zone",
+              "default": "now()",
+              "nullable": false
+            }
+          ]
+        },
+        {
+          "name": "care_events",
+          "columns": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "default": "gen_random_uuid()",
+              "nullable": false
+            },
+            {
+              "name": "workplace_id",
+              "type": "uuid",
+              "default": null,
+              "nullable": false
+            },
+            {
+              "name": "planting_id",
+              "type": "uuid",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "asset_id",
+              "type": "uuid",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "zone_id",
+              "type": "uuid",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "type",
+              "type": "USER-DEFINED",
+              "default": null,
+              "nullable": false
+            },
+            {
+              "name": "occurred_at",
+              "type": "timestamp with time zone",
+              "default": "now()",
+              "nullable": false
+            },
+            {
+              "name": "labor_minutes",
+              "type": "integer",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "water_liters",
+              "type": "numeric",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "material_cost",
+              "type": "numeric",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "currency",
+              "type": "text",
+              "default": "'MXN'::text",
+              "nullable": true
+            },
+            {
+              "name": "notes",
+              "type": "text",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "payload",
+              "type": "jsonb",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "default": "now()",
+              "nullable": false
+            }
+          ]
+        },
+        {
+          "name": "harvest_events",
+          "columns": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "default": "gen_random_uuid()",
+              "nullable": false
+            },
+            {
+              "name": "workplace_id",
+              "type": "uuid",
+              "default": null,
+              "nullable": false
+            },
+            {
+              "name": "planting_id",
+              "type": "uuid",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "item_id",
+              "type": "uuid",
+              "default": null,
+              "nullable": false
+            },
+            {
+              "name": "occurred_at",
+              "type": "timestamp with time zone",
+              "default": "now()",
+              "nullable": false
+            },
+            {
+              "name": "quantity",
+              "type": "numeric",
+              "default": "0",
+              "nullable": false
+            },
+            {
+              "name": "unit",
+              "type": "text",
+              "default": "'kg'::text",
+              "nullable": false
+            },
+            {
+              "name": "destination",
+              "type": "text",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "notes",
+              "type": "text",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "payload",
+              "type": "jsonb",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "default": "now()",
+              "nullable": false
+            }
+          ]
+        },
+        {
+          "name": "issue_events",
+          "columns": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "default": "gen_random_uuid()",
+              "nullable": false
+            },
+            {
+              "name": "workplace_id",
+              "type": "uuid",
+              "default": null,
+              "nullable": false
+            },
+            {
+              "name": "planting_id",
+              "type": "uuid",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "asset_id",
+              "type": "uuid",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "zone_id",
+              "type": "uuid",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "type",
+              "type": "USER-DEFINED",
+              "default": null,
+              "nullable": false
+            },
+            {
+              "name": "occurred_at",
+              "type": "timestamp with time zone",
+              "default": "now()",
+              "nullable": false
+            },
+            {
+              "name": "severity",
+              "type": "integer",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "notes",
+              "type": "text",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "payload",
+              "type": "jsonb",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "default": "now()",
+              "nullable": false
+            }
+          ]
+        },
+        {
+          "name": "items",
+          "columns": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "default": "gen_random_uuid()",
+              "nullable": false
+            },
+            {
+              "name": "workplace_id",
+              "type": "uuid",
+              "default": null,
+              "nullable": false
+            },
+            {
+              "name": "name",
+              "type": "text",
+              "default": null,
+              "nullable": false
+            },
+            {
+              "name": "slug",
+              "type": "text",
+              "default": null,
+              "nullable": false
+            },
+            {
+              "name": "category",
+              "type": "text",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "notes",
+              "type": "text",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "default": "now()",
+              "nullable": false
+            },
+            {
+              "name": "updated_at",
+              "type": "timestamp with time zone",
+              "default": "now()",
+              "nullable": false
+            }
+          ]
+        },
+        {
+          "name": "layouts",
+          "columns": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "default": "gen_random_uuid()",
+              "nullable": false
+            },
+            {
+              "name": "workplace_id",
+              "type": "uuid",
+              "default": null,
+              "nullable": false
+            },
+            {
+              "name": "area_id",
+              "type": "uuid",
+              "default": null,
+              "nullable": false
+            },
+            {
+              "name": "name",
+              "type": "text",
+              "default": null,
+              "nullable": false
+            },
+            {
+              "name": "version",
+              "type": "integer",
+              "default": "1",
+              "nullable": false
+            },
+            {
+              "name": "is_active",
+              "type": "boolean",
+              "default": "true",
+              "nullable": false
+            },
+            {
+              "name": "doc_json",
+              "type": "jsonb",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "default": "now()",
+              "nullable": false
+            },
+            {
+              "name": "updated_at",
+              "type": "timestamp with time zone",
+              "default": "now()",
+              "nullable": false
+            }
+          ]
+        },
+        {
+          "name": "plantings",
+          "columns": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "default": "gen_random_uuid()",
+              "nullable": false
+            },
+            {
+              "name": "workplace_id",
+              "type": "uuid",
+              "default": null,
+              "nullable": false
+            },
+            {
+              "name": "item_id",
+              "type": "uuid",
+              "default": null,
+              "nullable": false
+            },
+            {
+              "name": "seed_lot_id",
+              "type": "uuid",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "area_id",
+              "type": "uuid",
+              "default": null,
+              "nullable": false
+            },
+            {
+              "name": "asset_id",
+              "type": "uuid",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "zone_id",
+              "type": "uuid",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "pin_x",
+              "type": "numeric",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "pin_y",
+              "type": "numeric",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "planted_at",
+              "type": "date",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "status",
+              "type": "USER-DEFINED",
+              "default": "'active'::roseiies.planting_status",
+              "nullable": false
+            },
+            {
+              "name": "failed_reason",
+              "type": "text",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "notes_garden",
+              "type": "text",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "notes_kitchen",
+              "type": "text",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "notes_guest",
+              "type": "text",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "guest_visible",
+              "type": "boolean",
+              "default": "false",
+              "nullable": false
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "default": "now()",
+              "nullable": false
+            },
+            {
+              "name": "updated_at",
+              "type": "timestamp with time zone",
+              "default": "now()",
+              "nullable": false
+            }
+          ]
+        },
+        {
+          "name": "seed_lots",
+          "columns": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "default": "gen_random_uuid()",
+              "nullable": false
+            },
+            {
+              "name": "workplace_id",
+              "type": "uuid",
+              "default": null,
+              "nullable": false
+            },
+            {
+              "name": "item_id",
+              "type": "uuid",
+              "default": null,
+              "nullable": false
+            },
+            {
+              "name": "supplier",
+              "type": "text",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "lot_code",
+              "type": "text",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "purchased_at",
+              "type": "date",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "unit",
+              "type": "text",
+              "default": null,
+              "nullable": false
+            },
+            {
+              "name": "quantity",
+              "type": "numeric",
+              "default": "0",
+              "nullable": false
+            },
+            {
+              "name": "unit_cost",
+              "type": "numeric",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "currency",
+              "type": "text",
+              "default": "'MXN'::text",
+              "nullable": true
+            },
+            {
+              "name": "notes",
+              "type": "text",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "default": "now()",
+              "nullable": false
+            },
+            {
+              "name": "updated_at",
+              "type": "timestamp with time zone",
+              "default": "now()",
+              "nullable": false
+            }
+          ]
+        },
+        {
+          "name": "workplace_memberships",
+          "columns": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "default": "gen_random_uuid()",
+              "nullable": false
+            },
+            {
+              "name": "workplace_id",
+              "type": "uuid",
+              "default": null,
+              "nullable": false
+            },
+            {
+              "name": "user_id",
+              "type": "uuid",
+              "default": null,
+              "nullable": false
+            },
+            {
+              "name": "role",
+              "type": "text",
+              "default": "'member'::text",
+              "nullable": false
+            },
+            {
+              "name": "can_edit_garden",
+              "type": "boolean",
+              "default": "false",
+              "nullable": false
+            },
+            {
+              "name": "can_manage_members",
+              "type": "boolean",
+              "default": "false",
+              "nullable": false
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "default": "now()",
+              "nullable": false
+            },
+            {
+              "name": "updated_at",
+              "type": "timestamp with time zone",
+              "default": "now()",
+              "nullable": false
+            }
+          ]
+        },
+        {
+          "name": "workplaces",
+          "columns": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "default": "gen_random_uuid()",
+              "nullable": false
+            },
+            {
+              "name": "slug",
+              "type": "text",
+              "default": null,
+              "nullable": false
+            },
+            {
+              "name": "name",
+              "type": "text",
+              "default": null,
+              "nullable": false
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "default": "now()",
+              "nullable": false
+            },
+            {
+              "name": "updated_at",
+              "type": "timestamp with time zone",
+              "default": "now()",
+              "nullable": false
+            }
+          ]
+        },
+        {
+          "name": "zones",
+          "columns": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "default": "gen_random_uuid()",
+              "nullable": false
+            },
+            {
+              "name": "workplace_id",
+              "type": "uuid",
+              "default": null,
+              "nullable": false
+            },
+            {
+              "name": "asset_id",
+              "type": "uuid",
+              "default": null,
+              "nullable": false
+            },
+            {
+              "name": "code",
+              "type": "text",
+              "default": null,
+              "nullable": false
+            },
+            {
+              "name": "name",
+              "type": "text",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "geom",
+              "type": "jsonb",
+              "default": null,
+              "nullable": true
+            },
+            {
+              "name": "created_at",
+              "type": "timestamp with time zone",
+              "default": "now()",
+              "nullable": false
+            },
+            {
+              "name": "updated_at",
+              "type": "timestamp with time zone",
+              "default": "now()",
+              "nullable": false
+            }
+          ]
+        }
+      ],
+      "foreign_keys": [
+        {
+          "table": "areas",
+          "column": "workplace_id",
+          "ref_table": "workplaces",
+          "constraint": "areas_workplace_id_fkey",
+          "ref_column": "id"
+        },
+        {
+          "table": "assets",
+          "column": "area_id",
+          "ref_table": "areas",
+          "constraint": "assets_area_id_fkey",
+          "ref_column": "id"
+        },
+        {
+          "table": "assets",
+          "column": "layout_id",
+          "ref_table": "layouts",
+          "constraint": "assets_layout_id_fkey",
+          "ref_column": "id"
+        },
+        {
+          "table": "assets",
+          "column": "workplace_id",
+          "ref_table": "workplaces",
+          "constraint": "assets_workplace_id_fkey",
+          "ref_column": "id"
+        },
+        {
+          "table": "care_events",
+          "column": "asset_id",
+          "ref_table": "assets",
+          "constraint": "care_events_asset_id_fkey",
+          "ref_column": "id"
+        },
+        {
+          "table": "care_events",
+          "column": "planting_id",
+          "ref_table": "plantings",
+          "constraint": "care_events_planting_id_fkey",
+          "ref_column": "id"
+        },
+        {
+          "table": "care_events",
+          "column": "workplace_id",
+          "ref_table": "workplaces",
+          "constraint": "care_events_workplace_id_fkey",
+          "ref_column": "id"
+        },
+        {
+          "table": "care_events",
+          "column": "zone_id",
+          "ref_table": "zones",
+          "constraint": "care_events_zone_id_fkey",
+          "ref_column": "id"
+        },
+        {
+          "table": "harvest_events",
+          "column": "item_id",
+          "ref_table": "items",
+          "constraint": "harvest_events_item_id_fkey",
+          "ref_column": "id"
+        },
+        {
+          "table": "harvest_events",
+          "column": "planting_id",
+          "ref_table": "plantings",
+          "constraint": "harvest_events_planting_id_fkey",
+          "ref_column": "id"
+        },
+        {
+          "table": "harvest_events",
+          "column": "workplace_id",
+          "ref_table": "workplaces",
+          "constraint": "harvest_events_workplace_id_fkey",
+          "ref_column": "id"
+        },
+        {
+          "table": "issue_events",
+          "column": "asset_id",
+          "ref_table": "assets",
+          "constraint": "issue_events_asset_id_fkey",
+          "ref_column": "id"
+        },
+        {
+          "table": "issue_events",
+          "column": "planting_id",
+          "ref_table": "plantings",
+          "constraint": "issue_events_planting_id_fkey",
+          "ref_column": "id"
+        },
+        {
+          "table": "issue_events",
+          "column": "workplace_id",
+          "ref_table": "workplaces",
+          "constraint": "issue_events_workplace_id_fkey",
+          "ref_column": "id"
+        },
+        {
+          "table": "issue_events",
+          "column": "zone_id",
+          "ref_table": "zones",
+          "constraint": "issue_events_zone_id_fkey",
+          "ref_column": "id"
+        },
+        {
+          "table": "items",
+          "column": "workplace_id",
+          "ref_table": "workplaces",
+          "constraint": "items_workplace_id_fkey",
+          "ref_column": "id"
+        },
+        {
+          "table": "layouts",
+          "column": "area_id",
+          "ref_table": "areas",
+          "constraint": "layouts_area_id_fkey",
+          "ref_column": "id"
+        },
+        {
+          "table": "layouts",
+          "column": "workplace_id",
+          "ref_table": "workplaces",
+          "constraint": "layouts_workplace_id_fkey",
+          "ref_column": "id"
+        },
+        {
+          "table": "plantings",
+          "column": "area_id",
+          "ref_table": "areas",
+          "constraint": "plantings_area_id_fkey",
+          "ref_column": "id"
+        },
+        {
+          "table": "plantings",
+          "column": "asset_id",
+          "ref_table": "assets",
+          "constraint": "plantings_asset_id_fkey",
+          "ref_column": "id"
+        },
+        {
+          "table": "plantings",
+          "column": "item_id",
+          "ref_table": "items",
+          "constraint": "plantings_item_id_fkey",
+          "ref_column": "id"
+        },
+        {
+          "table": "plantings",
+          "column": "seed_lot_id",
+          "ref_table": "seed_lots",
+          "constraint": "plantings_seed_lot_id_fkey",
+          "ref_column": "id"
+        },
+        {
+          "table": "plantings",
+          "column": "workplace_id",
+          "ref_table": "workplaces",
+          "constraint": "plantings_workplace_id_fkey",
+          "ref_column": "id"
+        },
+        {
+          "table": "plantings",
+          "column": "zone_id",
+          "ref_table": "zones",
+          "constraint": "plantings_zone_id_fkey",
+          "ref_column": "id"
+        },
+        {
+          "table": "seed_lots",
+          "column": "item_id",
+          "ref_table": "items",
+          "constraint": "seed_lots_item_id_fkey",
+          "ref_column": "id"
+        },
+        {
+          "table": "seed_lots",
+          "column": "workplace_id",
+          "ref_table": "workplaces",
+          "constraint": "seed_lots_workplace_id_fkey",
+          "ref_column": "id"
+        },
+        {
+          "table": "workplace_memberships",
+          "column": "workplace_id",
+          "ref_table": "workplaces",
+          "constraint": "workplace_memberships_workplace_id_fkey",
+          "ref_column": "id"
+        },
+        {
+          "table": "zones",
+          "column": "asset_id",
+          "ref_table": "assets",
+          "constraint": "zones_asset_id_fkey",
+          "ref_column": "id"
+        },
+        {
+          "table": "zones",
+          "column": "workplace_id",
+          "ref_table": "workplaces",
+          "constraint": "zones_workplace_id_fkey",
+          "ref_column": "id"
+        }
+      ]
+    }
+  }
+]

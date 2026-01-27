@@ -10,7 +10,7 @@ export default function DesktopShell(props: {
   leftOpen: boolean;
   setLeftOpen: (v: boolean) => void;
   rightOpen: boolean;
-  setRightOpen: (v: boolean) => void;
+  setRightOpen: (v: boolean) => void; 
 
   module: any;
   store: any;
@@ -106,9 +106,7 @@ export default function DesktopShell(props: {
                   onUpdateItem={props.store.updateItem}
                   onUpdateMeta={props.store.updateMeta}
                   onUpdateStyle={props.store.updateStyle}
-                  onAddPlant={props.store.addPlantToBed}
-                  onUpdatePlant={props.store.updatePlant}
-                  onRemovePlant={props.store.removePlant}
+                  plantings={props.canvasProps?.plantings ?? []}
                 />
               </div>
             </div>

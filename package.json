@@ -13,5 +13,8 @@
     "@types/node": "^20",
     "turbo": "^2.7.5",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "framer-motion": "^12.29.2"
   }
 }

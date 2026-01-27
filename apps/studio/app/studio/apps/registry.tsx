@@ -19,7 +19,7 @@ function gardenViewKey(tenantId: string) {
 function readGardenView(tenantId: string): GardenView {
   try {
     const raw = localStorage.getItem(gardenViewKey(tenantId));
-    return raw === "sheets" || raw === "designer" ? raw : "designer";
+    return raw === "dashboard" || raw === "sheets" || raw === "designer" ? raw : "dashboard";
   } catch {
     return "designer";
   }
@@ -41,10 +41,13 @@ function GardenAppHost({
   const tenantId = portal?.tenantId ?? "";
 
   // deterministic initial state
-  const [view, setView] = useState<GardenView>("designer");
+  const [view, setView] = useState<GardenView>("dashboard");
 
   // ✅ gate rendering until we restore preference
   const [ready, setReady] = useState(false);
+
+  // ✅ dashboard overlay: open on entry
+  const [dashboardOpen, setDashboardOpen] = useState(true);
 
   useEffect(() => {
     if (!tenantId) {
@@ -62,6 +65,11 @@ function GardenAppHost({
     writeGardenView(tenantId, view);
   }, [tenantId, view, ready]);
 
+  // ✅ Each time the Garden app host mounts (entering the app), show dashboard.
+  useEffect(() => {
+    setDashboardOpen(true);
+  }, []);
+
   // ✅ prevents “designer flash”
   if (!ready) {
     return (
@@ -69,7 +77,6 @@ function GardenAppHost({
         Cargando…
       </div>
     );
-    // or: return null; (if you prefer no placeholder)
   }
 
   return (

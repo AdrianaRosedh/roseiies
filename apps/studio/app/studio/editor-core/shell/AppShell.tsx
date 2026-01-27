@@ -2,7 +2,6 @@
 
 import React, { useEffect, useRef } from "react";
 import DockLeft, { type ShellNavItem } from "./DockLeft";
-import PoweredBy from "./PoweredBy";
 
 export type { ShellNavItem };
 
@@ -71,7 +70,6 @@ export default function AppShell(props: {
 
       <main className="flex-1 min-w-0 h-full overflow-hidden relative">
         {props.children}
-        <PoweredBy text={props.watermarkText ?? "Powered by Roseiies"} />
       </main>
     </div>
   );
