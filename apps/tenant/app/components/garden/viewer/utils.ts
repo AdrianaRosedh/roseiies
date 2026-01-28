@@ -28,7 +28,6 @@ export function roleCard(p: GardenPlanting, role: Role): RoleCard {
 
 export function buildPlantingsByBed(plantings: GardenPlanting[]) {
   const m = new Map<string, GardenPlanting[]>();
-
   for (const p of plantings) {
     if (!p?.bed_id) continue;
     const key = String(p.bed_id);
@@ -36,10 +35,8 @@ export function buildPlantingsByBed(plantings: GardenPlanting[]) {
     arr.push(p);
     m.set(key, arr);
   }
-
   return m;
 }
-
 
 export function getBeds(items: Item[]) {
   return items.filter((i) => i.type === "bed");

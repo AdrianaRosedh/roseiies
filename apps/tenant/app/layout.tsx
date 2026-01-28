@@ -19,7 +19,7 @@ export default async function RootLayout({
           // Keep tenant accent if provided, otherwise default to Roseiies blue
           ["--accent" as any]: theme.colors?.accent ?? "var(--rose-blue)",
         }}
-        className="min-h-screen bg-(--bg) text-(--fg)"
+        className="h-dvh overflow-hidden bg-(--bg) text-(--fg)"
       >
         {/* ✅ Subtle Roseiies background like Studio */}
         <div className="roseiies-tenant-bg" aria-hidden="true">

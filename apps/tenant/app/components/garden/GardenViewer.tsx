@@ -44,16 +44,18 @@ function matchesPlanting(p: GardenPlanting, q: string) {
  * IMPORTANT:
  * Canvas beds often have their own id (item.id).
  * Plantings are keyed by DB planting.bed_id.
- * If your bed items include DB bed id somewhere, we should use it.
+ *
+ * After our load-view.ts change, bed.meta.db_id exists and is the DB asset id.
  */
 function bedKey(bed: any): string {
-  return (
+  return String(
     bed?.bed_id ??
-    bed?.meta?.bed_id ??
-    bed?.data?.bed_id ??
-    bed?.db_id ??
-    bed?.meta?.db_id ??
-    bed?.id // fallback (canvas id)
+      bed?.meta?.bed_id ??
+      bed?.data?.bed_id ??
+      bed?.db_id ??
+      bed?.meta?.db_id ??
+      bed?.id ??
+      ""
   );
 }
 
@@ -73,7 +75,7 @@ export default function GardenViewer(props: {
 
   const beds = useMemo(() => getBeds(props.items), [props.items]);
 
-  // ✅ Build DB-bed-id -> canvas-bed-id mapping (and lookup by DB id)
+  // ✅ DB bed id -> canvas bed id mapping
   const bedDbToCanvasId = useMemo(() => {
     const m = new Map<string, string>();
     for (const b of beds) {
@@ -83,19 +85,40 @@ export default function GardenViewer(props: {
     return m;
   }, [beds]);
 
+  // ✅ DB bed id -> bed Item (label, etc.)
   const bedByDbId = useMemo(() => {
-    const m = new Map<string, any>();
+    const m = new Map<string, Item>();
     for (const b of beds) {
       const k = bedKey(b);
-      if (k) m.set(k, b);
+      if (k) m.set(String(k), b);
     }
     return m;
   }, [beds]);
 
-  const plantingsByBed = useMemo(
+  // ✅ DB bed id -> plantings (for panels)
+  const plantingsByDbBed = useMemo(
     () => buildPlantingsByBed(props.plantings),
     [props.plantings]
   );
+
+  // ✅ Canvas bed id -> plantings (for pins on the map)
+  const plantingsByCanvasBed = useMemo(() => {
+    const m = new Map<string, GardenPlanting[]>();
+
+    for (const p of props.plantings) {
+      const dbBedId = p.bed_id ? String(p.bed_id) : null;
+      if (!dbBedId) continue;
+
+      const canvasBedId = bedDbToCanvasId.get(dbBedId);
+      if (!canvasBedId) continue;
+
+      const arr = m.get(canvasBedId) ?? [];
+      arr.push(p);
+      m.set(canvasBedId, arr);
+    }
+
+    return m;
+  }, [props.plantings, bedDbToCanvasId]);
 
   const [selectedBedId, setSelectedBedId] = useState<string | null>(null);
   const [selectedPlantingId, setSelectedPlantingId] = useState<string | null>(
@@ -113,9 +136,9 @@ export default function GardenViewer(props: {
 
   const selectedBedPlantingsAll = useMemo(() => {
     if (!selectedBed) return [];
-    const key = bedKey(selectedBed);
-    return plantingsByBed.get(key) ?? [];
-  }, [plantingsByBed, selectedBed]);
+    const key = String(bedKey(selectedBed));
+    return plantingsByDbBed.get(key) ?? [];
+  }, [plantingsByDbBed, selectedBed]);
 
   const selectedBedPlantings = useMemo(() => {
     return selectedBedPlantingsAll.filter((p) => matchesPlanting(p, query));
@@ -139,6 +162,7 @@ export default function GardenViewer(props: {
     padding: fitPadding,
   });
 
+  // ✅ Only fit once (prevents “bounce” on re-renders)
   const didFitRef = useRef(false);
   useEffect(() => {
     if (!mounted) return;
@@ -160,6 +184,7 @@ export default function GardenViewer(props: {
     setSheetSnap("collapsed");
   };
 
+  // ✅ Clicking bed should only PAN (no zoom jump)
   const selectBed = (bedId: string) => {
     setSelectedBedId(bedId);
     setSelectedPlantingId(null);
@@ -170,6 +195,7 @@ export default function GardenViewer(props: {
     if (!isDesktop) openToMedium();
   };
 
+  // ✅ Clicking pin should PAN + select planting
   const selectPin = (bedId: string, plantingId: string) => {
     setSelectedBedId(bedId);
     setSelectedPlantingId(plantingId);
@@ -189,7 +215,7 @@ export default function GardenViewer(props: {
       .map((b) => ({ id: b.id, label: b.label }));
   }, [beds, query]);
 
-  // ✅ FIX: cropResults should map planting.bed_id (DB) -> bed canvas id
+  // ✅ Search crop results: DB bed id -> canvas bed id
   const cropResults: CropResult[] = useMemo(() => {
     const q = query.trim();
     if (!q) return [];
@@ -214,7 +240,9 @@ export default function GardenViewer(props: {
 
     const seen = new Set<string>();
     return out
-      .filter((r) => (seen.has(r.plantingId) ? false : (seen.add(r.plantingId), true)))
+      .filter((r) =>
+        seen.has(r.plantingId) ? false : (seen.add(r.plantingId), true)
+      )
       .slice(0, 10);
   }, [props.plantings, query, bedByDbId, bedDbToCanvasId]);
 
@@ -250,7 +278,10 @@ export default function GardenViewer(props: {
       ) : (
         <>
           {/* Search overlay */}
-          <div ref={searchBoxRef} className="pointer-events-none absolute left-4 top-4 z-90">
+          <div
+            ref={searchBoxRef}
+            className="pointer-events-none absolute left-4 top-4 z-90"
+          >
             <div className="pointer-events-auto">
               <SearchBar
                 value={query}
@@ -286,6 +317,17 @@ export default function GardenViewer(props: {
             </div>
           </div>
 
+          {/* Debug HUD (remove later if you want) */}
+          <div className="pointer-events-none absolute right-4 top-4 z-90">
+            <div className="pointer-events-auto rounded-xl border border-(--rose-border) bg-(--rose-surface)/80 backdrop-blur px-3 py-2 text-xs text-(--rose-muted) shadow-sm">
+              <div>items: {props.items.length}</div>
+              <div>beds: {beds.length}</div>
+              <div>plantings: {props.plantings.length}</div>
+              <div>selectedBedId: {selectedBedId ?? "—"}</div>
+              <div>selectedPlantingId: {selectedPlantingId ?? "—"}</div>
+            </div>
+          </div>
+
           {/* Map */}
           <GardenMap
             stageRefSetter={viewport.setStageRef}
@@ -294,7 +336,8 @@ export default function GardenViewer(props: {
             isPinching={viewport.isPinching}
             canvas={props.canvas}
             items={props.items}
-            plantingsByBed={plantingsByBed}
+            // ✅ IMPORTANT: pins need CANVAS keyed map
+            plantingsByBed={plantingsByCanvasBed}
             selectedBedId={selectedBedId}
             onSelectBed={selectBed}
             onSelectPin={selectPin}
@@ -303,7 +346,9 @@ export default function GardenViewer(props: {
             onTouchStart={viewport.onTouchStart}
             onTouchMove={viewport.onTouchMove}
             onTouchEnd={viewport.onTouchEnd}
-            onDragEnd={(pos) => viewport.setVp((p) => ({ ...p, x: pos.x, y: pos.y }))}
+            onDragEnd={(pos) =>
+              viewport.setVp((p) => ({ ...p, x: pos.x, y: pos.y }))
+            }
           />
 
           {/* Floating controls */}
