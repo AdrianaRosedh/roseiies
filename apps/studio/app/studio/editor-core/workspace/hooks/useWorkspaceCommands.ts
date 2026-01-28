@@ -95,10 +95,8 @@ export function useWorkspaceCommands(deps: WorkspaceCommandsDeps): WorkspaceComm
     if (!activeLayout || !activeGarden) return { ok: false, error: "No active garden/layout" };
     if (!tenantId) return { ok: false, error: "Missing tenantId" };
 
-    // ✅ DB Area is physical place. Studio gardens are just UI grouping.
     const areaName = "Garden";
 
-    // ✅ client must send this header or server will 401
     const studioToken = process.env.NEXT_PUBLIC_ROSEIIES_STUDIO_TOKEN;
 
     const res = await fetch("/api/publish-garden-layout", {
@@ -108,9 +106,9 @@ export function useWorkspaceCommands(deps: WorkspaceCommandsDeps): WorkspaceComm
         ...(studioToken ? { "x-roseiies-studio-token": studioToken } : {}),
       },
       body: JSON.stringify({
-        tenantId,
+        workplaceSlug: tenantId, // ✅ tenantId is acting as workplaceSlug right now
         areaName,
-        layoutName: activeLayout.name, // e.g. "Winter 2026"
+        layoutName: activeLayout.name,
         doc,
       }),
     });
@@ -131,7 +129,12 @@ export function useWorkspaceCommands(deps: WorkspaceCommandsDeps): WorkspaceComm
       }),
     }));
 
-    return { ok: true, itemsWritten: json.itemsWritten ?? json.assetsWritten ?? 0 };
+    return {
+      ok: true,
+      itemsWritten: json.itemsWritten ?? json.assetsWritten ?? 0,
+      viewUrl: json.viewUrl ?? (json?.layoutId ? `/view/${json.layoutId}` : undefined),
+      layoutId: json.layoutId ?? json?.layout?.id ?? undefined,
+    };
   }
 
   function resetView() {

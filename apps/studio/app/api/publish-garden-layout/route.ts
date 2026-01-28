@@ -69,16 +69,11 @@ export async function POST(req: Request) {
     step = "parse_body";
     const body: any = await req.json();
 
-    // ✅ physical DB area
     const areaName = safeStr(body?.areaName) ?? "Garden";
-
-    // ✅ version label
     const layoutName = safeStr(body?.layoutName) ?? "Garden Layout v1";
-
-    // ✅ canonical document
     const doc = body?.doc as LayoutDoc | null;
 
-    // Optional workplace override
+    // ✅ IMPORTANT: studio should send workplaceSlug (not tenantId)
     const workplaceSlug = safeStr(body?.workplaceSlug) ?? "olivea";
 
     if (!doc?.canvas || !Array.isArray(doc?.items)) {
@@ -109,7 +104,6 @@ export async function POST(req: Request) {
     if (aerr) return NextResponse.json({ error: aerr.message, step }, { status: 500 });
 
     let areaId = areaExisting?.id as string | undefined;
-    const viewerWasEnabled = Boolean((areaExisting as any)?.viewer_enabled);
 
     if (!areaId) {
       const { data: createdArea, error: ains } = await supabase
@@ -133,8 +127,7 @@ export async function POST(req: Request) {
       areaId = createdArea.id;
     }
 
-    // ✅ Gate: tenant viewer exists only after first publish
-    // (idempotent: only flips false -> true)
+    // Gate: viewer exists only after first publish
     step = "enable_viewer_gate";
     const { error: vupd } = await supabase
       .schema("roseiies")
@@ -195,7 +188,10 @@ export async function POST(req: Request) {
         .single();
 
       if (lins || !created?.id) {
-        return NextResponse.json({ error: lins?.message ?? "Failed to create layout", step }, { status: 500 });
+        return NextResponse.json(
+          { error: lins?.message ?? "Failed to create layout", step },
+          { status: 500 }
+        );
       }
       layoutId = created.id;
     } else {
@@ -249,7 +245,6 @@ export async function POST(req: Request) {
       const type = normalizeItemType(it.type);
       const name = safeStr(it.label);
 
-      // ✅ canonical geometry must overwrite stubs
       const geom = {
         x: it.x,
         y: it.y,
@@ -349,6 +344,11 @@ export async function POST(req: Request) {
       workplace: { id: workplace.id, slug: workplace.slug, name: workplace.name },
       area: { id: areaId, name: areaName },
       layout: { id: layoutId, name: layoutName },
+
+      // ✅ canonical permalink (works now, scales later)
+      viewUrl: `/view/${layoutId}`,
+      layoutId,
+
       assetsInserted,
       assetsUpdated,
       zonesUpserted,
@@ -356,6 +356,9 @@ export async function POST(req: Request) {
     });
   } catch (e: any) {
     console.error("publish-garden-layout crashed", { step, error: e });
-    return NextResponse.json({ error: e?.message ?? "publish-garden-layout crashed", step }, { status: 500 });
+    return NextResponse.json(
+      { error: e?.message ?? "publish-garden-layout crashed", step },
+      { status: 500 }
+    );
   }
 }

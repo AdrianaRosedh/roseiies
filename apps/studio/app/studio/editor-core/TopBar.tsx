@@ -9,7 +9,7 @@ import AppTopBar from "./shell/components/AppTopBar";
 type Mode = null | "newGarden" | "renameGarden" | "newLayout" | "renameLayout";
 
 export type PublishResult =
-  | { ok: true; itemsWritten?: number }
+  | { ok: true; itemsWritten?: number; viewUrl?: string; layoutId?: string }
   | { ok: false; error: string };
 
 export default function TopBar(props: {
@@ -46,7 +46,6 @@ export default function TopBar(props: {
   onOpenMobileMore?: () => void;
   onOpenMobileContext?: () => void;
 
-  // optional identity overrides
   appLabel?: string;
   viewLabel?: string;
 }) {
@@ -57,6 +56,8 @@ export default function TopBar(props: {
   const [value, setValue] = useState("");
   const [publishing, setPublishing] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+
+  const [lastViewUrl, setLastViewUrl] = useState<string | null>(null);
 
   const publishedDot = useMemo(
     () => (activeLayout?.published ? "●" : ""),
@@ -102,7 +103,12 @@ export default function TopBar(props: {
       const maybe = props.onPublish();
       if (maybe && typeof (maybe as any).then === "function") {
         const res = (await maybe) as PublishResult;
+
         if (res.ok) {
+          const url =
+            res.viewUrl ?? (res.layoutId ? `/view/${res.layoutId}` : null);
+          setLastViewUrl(url);
+
           setStatus(
             `Published${
               res.itemsWritten != null ? ` · ${res.itemsWritten} items` : ""
@@ -120,10 +126,18 @@ export default function TopBar(props: {
     }
   }
 
+  async function copyLastLink() {
+    if (!lastViewUrl) return;
+    const abs = `${window.location.origin}${lastViewUrl}`;
+    await navigator.clipboard.writeText(abs);
+    setStatus("Link copied");
+    window.setTimeout(() => setStatus(null), 1200);
+  }
+
   return (
     <div className="w-full">
       {/* Mobile */}
-      <div className="md:hidden"> 
+      <div className="md:hidden">
         <AppTopBar
           appLabel={appLabel}
           viewLabel={viewLabel}
@@ -244,6 +258,16 @@ export default function TopBar(props: {
                 <span className="hidden md:inline-flex rounded-full border border-black/10 bg-white px-3 py-2 text-xs text-black/70 shadow-sm">
                   {status}
                 </span>
+              ) : null}
+
+              {lastViewUrl ? (
+                <button
+                  className={btn("ghost")}
+                  onClick={copyLastLink}
+                  title="Copy public view link"
+                >
+                  Copy link
+                </button>
               ) : null}
 
               <button

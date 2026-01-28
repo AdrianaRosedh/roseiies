@@ -53,7 +53,7 @@ function bedKey(bed: any): string {
     bed?.data?.bed_id ??
     bed?.db_id ??
     bed?.meta?.db_id ??
-    bed?.id // fallback
+    bed?.id // fallback (canvas id)
   );
 }
 
@@ -72,6 +72,26 @@ export default function GardenViewer(props: {
   const { ref: measureRef, size } = useResizeObserver<HTMLDivElement>();
 
   const beds = useMemo(() => getBeds(props.items), [props.items]);
+
+  // ✅ Build DB-bed-id -> canvas-bed-id mapping (and lookup by DB id)
+  const bedDbToCanvasId = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const b of beds) {
+      const k = bedKey(b);
+      if (k) m.set(String(k), b.id);
+    }
+    return m;
+  }, [beds]);
+
+  const bedByDbId = useMemo(() => {
+    const m = new Map<string, any>();
+    for (const b of beds) {
+      const k = bedKey(b);
+      if (k) m.set(k, b);
+    }
+    return m;
+  }, [beds]);
+
   const plantingsByBed = useMemo(
     () => buildPlantingsByBed(props.plantings),
     [props.plantings]
@@ -91,7 +111,6 @@ export default function GardenViewer(props: {
     [beds, selectedBedId]
   );
 
-  // ✅ FIX: use bedKey(selectedBed) rather than selectedBedId
   const selectedBedPlantingsAll = useMemo(() => {
     if (!selectedBed) return [];
     const key = bedKey(selectedBed);
@@ -104,9 +123,7 @@ export default function GardenViewer(props: {
 
   const selectedPlanting = useMemo(() => {
     if (selectedPlantingId) {
-      return (
-        props.plantings.find((p) => p.id === selectedPlantingId) ?? null
-      );
+      return props.plantings.find((p) => p.id === selectedPlantingId) ?? null;
     }
     if (selectedBedId) return selectedBedPlantings[0] ?? null;
     return null;
@@ -131,9 +148,9 @@ export default function GardenViewer(props: {
     viewport.fitToContent();
   }, [mounted, size.width, size.height, viewport]);
 
-  const [sheetSnap, setSheetSnap] = useState<
-    "collapsed" | "medium" | "large"
-  >("collapsed");
+  const [sheetSnap, setSheetSnap] = useState<"collapsed" | "medium" | "large">(
+    "collapsed"
+  );
   const openToMedium = () => setSheetSnap("medium");
   const openToLarge = () => setSheetSnap("large");
 
@@ -148,7 +165,6 @@ export default function GardenViewer(props: {
     setSelectedPlantingId(null);
 
     const bed = beds.find((b) => b.id === bedId);
-    // ✅ no zoom jump
     if (bed && "panToBed" in viewport) (viewport as any).panToBed(bed);
 
     if (!isDesktop) openToMedium();
@@ -159,7 +175,6 @@ export default function GardenViewer(props: {
     setSelectedPlantingId(plantingId);
 
     const bed = beds.find((b) => b.id === bedId);
-    // ✅ no zoom jump
     if (bed && "panToBed" in viewport) (viewport as any).panToBed(bed);
 
     if (!isDesktop) openToLarge();
@@ -174,19 +189,24 @@ export default function GardenViewer(props: {
       .map((b) => ({ id: b.id, label: b.label }));
   }, [beds, query]);
 
+  // ✅ FIX: cropResults should map planting.bed_id (DB) -> bed canvas id
   const cropResults: CropResult[] = useMemo(() => {
     const q = query.trim();
     if (!q) return [];
+
     const out: CropResult[] = [];
 
     for (const p of props.plantings) {
       if (!matchesPlanting(p, q)) continue;
-      // NOTE: this uses p.bed_id, which is DB id, not canvas id
-      const bed = beds.find((b) => b.id === p.bed_id);
+
+      const dbBedId = p.bed_id ? String(p.bed_id) : null;
+      const bed = dbBedId ? bedByDbId.get(dbBedId) : null;
+      const canvasBedId = dbBedId ? bedDbToCanvasId.get(dbBedId) : null;
+
       out.push({
         plantingId: p.id,
         crop: p.crop ?? "Unknown",
-        bedId: p.bed_id,
+        bedId: canvasBedId ?? bed?.id ?? (dbBedId ?? "unknown-bed"),
         bedLabel: bed?.label ?? "Bed",
         subtitle: p.status ?? undefined,
       });
@@ -194,11 +214,9 @@ export default function GardenViewer(props: {
 
     const seen = new Set<string>();
     return out
-      .filter((r) =>
-        seen.has(r.plantingId) ? false : (seen.add(r.plantingId), true)
-      )
+      .filter((r) => (seen.has(r.plantingId) ? false : (seen.add(r.plantingId), true)))
       .slice(0, 10);
-  }, [props.plantings, beds, query]);
+  }, [props.plantings, query, bedByDbId, bedDbToCanvasId]);
 
   useEffect(() => {
     if (!mounted) return;
