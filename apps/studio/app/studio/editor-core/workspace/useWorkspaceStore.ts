@@ -39,7 +39,7 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
   // persistence
   const { mounted, state, setState } = useWorkspacePersistence({ module, storageKey: key });
 
-  // ui state (local; split later)
+  // ui state
   const [ui, setUI] = useState<WorkspaceUIState>({
     tool: "bed",
     selectedIds: [],
@@ -50,7 +50,7 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
     selectionVersion: 0,
   });
 
-  // derived view aliases (back-compat for existing UI)
+  // derived view aliases
   const tool = ui.tool;
   const selectedIds = ui.selectedIds;
   const stageScale = ui.stageScale;
@@ -61,11 +61,6 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
   const doc = useMemo(() => getActiveDoc(state, module), [state, module]);
   const selected = useMemo(() => getSelectedItem(doc, selectedIds), [doc, selectedIds]);
   const selectedItems = useMemo(() => getSelectedItems(doc, selectedIds), [doc, selectedIds]);
-
-  // ✅ make valid-id set stable for this doc instance
-  const validIdSet = useMemo(() => {
-    return new Set((doc.items ?? []).map((i) => i.id));
-  }, [doc]);
 
   function sameList(a: string[], b: string[]) {
     if (a === b) return true;
@@ -81,7 +76,6 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
 
     setUI((prev) => {
       if (sameList(prev.selectedIds, cleaned)) return prev;
-
       const dropped = cleaned.length !== incoming.length;
       return {
         ...prev,
@@ -105,7 +99,6 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
     },
   });
 
-  // core doc patching primitive (creates history snapshot)
   function updateDoc(patch: Partial<LayoutDoc>) {
     const layoutId = state.activeLayoutId;
     if (!layoutId) return;
@@ -229,7 +222,6 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
         return;
       }
 
-      // pan mode (space)
       if (e.key === " ") {
         e.preventDefault();
         setUI((prev) => (prev.panMode ? prev : { ...prev, panMode: true }));
@@ -238,7 +230,7 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
 
       if (e.key === "Escape") {
         setUI((prev) => ({ ...prev, panMode: false }));
-        setSelectedIds([]); // ✅ goes through idempotent sanitizer
+        setSelectedIds([]);
         return;
       }
 
@@ -337,7 +329,14 @@ export function useWorkspaceStore(module: StudioModule, opts?: { tenantId?: stri
     renameGarden: commands.renameGarden,
     newLayout: commands.newLayout,
     renameLayout: commands.renameLayout,
+
     publishLayout: commands.publishLayout,
+
+    // ✅ THIS is what your StudioShell publish button is calling
+    publishActiveLayout: ({ portal }: { portal: any }) => {
+      const tenantId = portal?.tenantId;
+      return commands.publishLayout(tenantId);
+    },
 
     resetView: commands.resetView,
 

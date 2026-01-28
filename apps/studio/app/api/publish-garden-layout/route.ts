@@ -8,7 +8,7 @@ type LayoutDoc = {
   canvas: { width: number; height: number };
   items: Array<{
     id: string;
-    type: string; // bed | tree | structure | zone | label | etc.
+    type: string;
     x: number;
     y: number;
     w: number;
@@ -41,9 +41,7 @@ function safeStr(v: any) {
 
 function normalizeItemType(t: string) {
   const type = String(t ?? "").trim().toLowerCase();
-  // keep it flexible; only normalize obvious cases
   if (type === "bed" || type === "tree" || type === "structure") return type;
-  // if you have custom types, keep them
   return type || "bed";
 }
 
@@ -65,264 +63,299 @@ export async function POST(req: Request) {
   const gate = requireStudioToken(req);
   if (!gate.ok) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  let body: any;
+  let step = "start";
+
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
-  }
+    step = "parse_body";
+    const body: any = await req.json();
 
-  const gardenName = safeStr(body?.gardenName) ?? "Garden";
-  const layoutName = safeStr(body?.layoutName) ?? "Garden Layout v1";
-  const doc = body?.doc as LayoutDoc | null;
+    // ✅ physical DB area
+    const areaName = safeStr(body?.areaName) ?? "Garden";
 
-  // Optional override for later multi-workplace
-  const workplaceSlug = safeStr(body?.workplaceSlug) ?? "olivea";
+    // ✅ version label
+    const layoutName = safeStr(body?.layoutName) ?? "Garden Layout v1";
 
-  if (!doc?.canvas || !Array.isArray(doc?.items)) {
-    return NextResponse.json({ error: "Missing doc.canvas or doc.items" }, { status: 400 });
-  }
+    // ✅ canonical document
+    const doc = body?.doc as LayoutDoc | null;
 
-  // 1) Resolve workplace
-  const { data: workplace, error: werr } = await supabase
-    .schema("roseiies")
-    .from("workplaces")
-    .select("id, slug, name")
-    .eq("slug", workplaceSlug)
-    .maybeSingle();
+    // Optional workplace override
+    const workplaceSlug = safeStr(body?.workplaceSlug) ?? "olivea";
 
-  if (werr || !workplace?.id) {
-    return NextResponse.json({ error: werr?.message ?? "Workplace not found" }, { status: 404 });
-  }
+    if (!doc?.canvas || !Array.isArray(doc?.items)) {
+      return NextResponse.json({ error: "Missing doc.canvas or doc.items" }, { status: 400 });
+    }
 
-  // 2) Ensure Area exists (Garden / Vineyard / etc.)
-  const { data: areaExisting, error: aerr } = await supabase
-    .schema("roseiies")
-    .from("areas")
-    .select("id, name")
-    .eq("workplace_id", workplace.id)
-    .eq("name", gardenName)
-    .maybeSingle();
+    step = "resolve_workplace";
+    const { data: workplace, error: werr } = await supabase
+      .schema("roseiies")
+      .from("workplaces")
+      .select("id, slug, name")
+      .eq("slug", workplaceSlug)
+      .maybeSingle();
 
-  if (aerr) return NextResponse.json({ error: aerr.message }, { status: 500 });
+    if (werr || !workplace?.id) {
+      return NextResponse.json({ error: werr?.message ?? "Workplace not found" }, { status: 404 });
+    }
 
-  let areaId = areaExisting?.id as string | undefined;
-  if (!areaId) {
-    const { data: areaCreated, error: ains } = await supabase
+    step = "ensure_area";
+    const { data: areaExisting, error: aerr } = await supabase
       .schema("roseiies")
       .from("areas")
-      .insert({
-        workplace_id: workplace.id,
-        name: gardenName,
-        kind: "garden",
-        notes: null,
-      })
-      .select("id")
-      .single();
+      .select("id, name, viewer_enabled")
+      .eq("workplace_id", workplace.id)
+      .eq("name", areaName)
+      .maybeSingle();
 
-    if (ains || !areaCreated?.id) {
-      return NextResponse.json({ error: ains?.message ?? "Failed to create area" }, { status: 500 });
-    }
-    areaId = areaCreated.id;
-  }
+    if (aerr) return NextResponse.json({ error: aerr.message, step }, { status: 500 });
 
-  // 3) Find layout by name (within area/workplace)
-  const { data: layoutExisting, error: lsel } = await supabase
-    .schema("roseiies")
-    .from("layouts")
-    .select("id, version")
-    .eq("workplace_id", workplace.id)
-    .eq("area_id", areaId)
-    .eq("name", layoutName)
-    .maybeSingle();
+    let areaId = areaExisting?.id as string | undefined;
+    const viewerWasEnabled = Boolean((areaExisting as any)?.viewer_enabled);
 
-  if (lsel) return NextResponse.json({ error: lsel.message }, { status: 500 });
-
-  // 4) Deactivate other layouts in area (we want ONE active)
-  const { error: deactErr } = await supabase
-    .schema("roseiies")
-    .from("layouts")
-    .update({ is_active: false })
-    .eq("workplace_id", workplace.id)
-    .eq("area_id", areaId);
-
-  if (deactErr) return NextResponse.json({ error: deactErr.message }, { status: 500 });
-
-  // 5) Upsert layout row (activate + bump version)
-  let layoutId: string;
-  if (!layoutExisting?.id) {
-    const { data: created, error: lins } = await supabase
-      .schema("roseiies")
-      .from("layouts")
-      .insert({
-        workplace_id: workplace.id,
-        area_id: areaId,
-        name: layoutName,
-        version: 1,
-        is_active: true,
-        doc_json: {
-          version: doc.version ?? 1,
-          canvas: doc.canvas,
-          // keep doc_json light; items are canonicalized into assets
-          meta: { source: "studio.publish-garden-layout" },
-        },
-      })
-      .select("id")
-      .single();
-
-    if (lins || !created?.id) {
-      return NextResponse.json({ error: lins?.message ?? "Failed to create layout" }, { status: 500 });
-    }
-    layoutId = created.id;
-  } else {
-    layoutId = layoutExisting.id;
-    const nextVersion = Number(layoutExisting.version ?? 1) + 1;
-
-    const { error: lupd } = await supabase
-      .schema("roseiies")
-      .from("layouts")
-      .update({
-        is_active: true,
-        version: nextVersion,
-        doc_json: {
-          version: doc.version ?? 1,
-          canvas: doc.canvas,
-          meta: { source: "studio.publish-garden-layout" },
-        },
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", layoutId);
-
-    if (lupd) return NextResponse.json({ error: lupd.message }, { status: 500 });
-  }
-
-  // 6) Fetch existing assets for this area (includes stubs created from plantings)
-  const { data: existingAssets, error: asel } = await supabase
-    .schema("roseiies")
-    .from("assets")
-    .select("id, tags")
-    .eq("workplace_id", workplace.id)
-    .eq("area_id", areaId);
-
-  if (asel) return NextResponse.json({ error: asel.message }, { status: 500 });
-
-  const byCanvasId = new Map<string, { id: string; tags: any[] | null }>();
-  for (const a of existingAssets ?? []) {
-    const canvasId = extractCanvasIdFromTags((a as any)?.tags);
-    if (canvasId) byCanvasId.set(canvasId, { id: (a as any).id, tags: (a as any).tags ?? null });
-  }
-
-  // 7) Upsert assets + zones for doc items
-  let assetsInserted = 0;
-  let assetsUpdated = 0;
-  let zonesUpserted = 0;
-
-  for (const it of doc.items ?? []) {
-    const canvasId = String(it?.id ?? "").trim();
-    if (!canvasId) continue;
-
-    const tag = canvasTag(canvasId);
-    const type = normalizeItemType(it.type);
-    const name = safeStr(it.label);
-
-    // Canonical geometry/style (keep flexible)
-    const geom = {
-      x: it.x,
-      y: it.y,
-      w: it.w,
-      h: it.h,
-      r: it.r,
-      order: it.order ?? 0,
-      canvas: doc.canvas,
-      meta: it.meta ?? {},
-    };
-
-    const style = it.style ?? {};
-
-    const existing = byCanvasId.get(canvasId);
-
-    if (!existing) {
-      const { data: created, error: ains } = await supabase
+    if (!areaId) {
+      const { data: createdArea, error: ains } = await supabase
         .schema("roseiies")
-        .from("assets")
+        .from("areas")
         .insert({
           workplace_id: workplace.id,
-          area_id: areaId,
-          layout_id: layoutId,
-          type,
-          name,
-          tags: [tag],
-          geom,
-          style,
+          name: areaName,
+          kind: "garden",
+          notes: null,
         })
         .select("id")
         .single();
 
-      if (ains || !created?.id) {
-        return NextResponse.json({ error: ains?.message ?? `Failed to insert asset ${canvasId}` }, { status: 500 });
+      if (ains || !createdArea?.id) {
+        return NextResponse.json(
+          { error: ains?.message ?? "Failed to create area", step },
+          { status: 500 }
+        );
       }
+      areaId = createdArea.id;
+    }
 
-      byCanvasId.set(canvasId, { id: created.id, tags: [tag] });
-      assetsInserted++;
-    } else {
-      // keep tags (ensure canvas tag exists)
-      const tags = Array.isArray(existing.tags) ? [...existing.tags] : [];
-      if (!tags.includes(tag)) tags.push(tag);
+    // ✅ Gate: tenant viewer exists only after first publish
+    // (idempotent: only flips false -> true)
+    step = "enable_viewer_gate";
+    const { error: vupd } = await supabase
+      .schema("roseiies")
+      .from("areas")
+      .update({
+        viewer_enabled: true,
+        viewer_follow_active: true,
+        viewer_layout_id: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", areaId!)
+      .eq("viewer_enabled", false);
 
-      const { error: aupd } = await supabase
+    if (vupd) return NextResponse.json({ error: vupd.message, step }, { status: 500 });
+
+    step = "find_layout";
+    const { data: layoutExisting, error: lsel } = await supabase
+      .schema("roseiies")
+      .from("layouts")
+      .select("id, version")
+      .eq("workplace_id", workplace.id)
+      .eq("area_id", areaId!)
+      .eq("name", layoutName)
+      .maybeSingle();
+
+    if (lsel) return NextResponse.json({ error: lsel.message, step }, { status: 500 });
+
+    step = "deactivate_layouts";
+    const { error: deactErr } = await supabase
+      .schema("roseiies")
+      .from("layouts")
+      .update({ is_active: false })
+      .eq("workplace_id", workplace.id)
+      .eq("area_id", areaId!);
+
+    if (deactErr) return NextResponse.json({ error: deactErr.message, step }, { status: 500 });
+
+    step = "upsert_layout";
+    let layoutId: string;
+
+    if (!layoutExisting?.id) {
+      const { data: created, error: lins } = await supabase
         .schema("roseiies")
-        .from("assets")
+        .from("layouts")
+        .insert({
+          workplace_id: workplace.id,
+          area_id: areaId!,
+          name: layoutName,
+          version: 1,
+          is_active: true,
+          doc_json: {
+            version: doc.version ?? 1,
+            canvas: doc.canvas,
+            meta: { source: "studio.publish-garden-layout" },
+          },
+        })
+        .select("id")
+        .single();
+
+      if (lins || !created?.id) {
+        return NextResponse.json({ error: lins?.message ?? "Failed to create layout", step }, { status: 500 });
+      }
+      layoutId = created.id;
+    } else {
+      layoutId = layoutExisting.id;
+      const nextVersion = Number(layoutExisting.version ?? 1) + 1;
+
+      const { error: lupd } = await supabase
+        .schema("roseiies")
+        .from("layouts")
         .update({
-          layout_id: layoutId,
-          type,
-          name,
-          tags,
-          geom,
-          style,
+          is_active: true,
+          version: nextVersion,
+          doc_json: {
+            version: doc.version ?? 1,
+            canvas: doc.canvas,
+            meta: { source: "studio.publish-garden-layout" },
+          },
           updated_at: new Date().toISOString(),
         })
-        .eq("id", existing.id);
+        .eq("id", layoutId);
 
-      if (aupd) {
-        return NextResponse.json({ error: aupd.message ?? `Failed to update asset ${canvasId}` }, { status: 500 });
+      if (lupd) return NextResponse.json({ error: lupd.message, step }, { status: 500 });
+    }
+
+    step = "load_existing_assets";
+    const { data: existingAssets, error: asel } = await supabase
+      .schema("roseiies")
+      .from("assets")
+      .select("id, tags")
+      .eq("workplace_id", workplace.id)
+      .eq("area_id", areaId!);
+
+    if (asel) return NextResponse.json({ error: asel.message, step }, { status: 500 });
+
+    const byCanvasId = new Map<string, { id: string; tags: any[] | null }>();
+    for (const a of existingAssets ?? []) {
+      const canvasId = extractCanvasIdFromTags((a as any)?.tags);
+      if (canvasId) byCanvasId.set(canvasId, { id: (a as any).id, tags: (a as any).tags ?? null });
+    }
+
+    step = "upsert_assets_and_zones";
+    let assetsInserted = 0;
+    let assetsUpdated = 0;
+    let zonesUpserted = 0;
+
+    for (const it of doc.items ?? []) {
+      const canvasId = String(it?.id ?? "").trim();
+      if (!canvasId) continue;
+
+      const tag = canvasTag(canvasId);
+      const type = normalizeItemType(it.type);
+      const name = safeStr(it.label);
+
+      // ✅ canonical geometry must overwrite stubs
+      const geom = {
+        x: it.x,
+        y: it.y,
+        w: it.w,
+        h: it.h,
+        r: it.r ?? 0,
+        order: it.order ?? 0,
+        meta: it.meta ?? {},
+      };
+
+      const style = it.style ?? {};
+      const existing = byCanvasId.get(canvasId);
+
+      if (!existing) {
+        const { data: created, error: ains } = await supabase
+          .schema("roseiies")
+          .from("assets")
+          .insert({
+            workplace_id: workplace.id,
+            area_id: areaId!,
+            layout_id: layoutId,
+            type,
+            name,
+            tags: [tag],
+            geom,
+            style,
+          })
+          .select("id")
+          .single();
+
+        if (ains || !created?.id) {
+          return NextResponse.json(
+            { error: ains?.message ?? `Failed to insert asset ${canvasId}`, step },
+            { status: 500 }
+          );
+        }
+
+        byCanvasId.set(canvasId, { id: created.id, tags: [tag] });
+        assetsInserted++;
+      } else {
+        const tags = Array.isArray(existing.tags) ? [...existing.tags] : [];
+        if (!tags.includes(tag)) tags.push(tag);
+
+        const { error: aupd } = await supabase
+          .schema("roseiies")
+          .from("assets")
+          .update({
+            layout_id: layoutId,
+            type,
+            name,
+            tags,
+            geom,
+            style,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", existing.id);
+
+        if (aupd) {
+          return NextResponse.json(
+            { error: aupd.message ?? `Failed to update asset ${canvasId}`, step },
+            { status: 500 }
+          );
+        }
+
+        assetsUpdated++;
       }
 
-      assetsUpdated++;
+      const assetId = byCanvasId.get(canvasId)!.id;
+      const zones = zonesFromMeta(it.meta);
+
+      for (const z of zones) {
+        const { error: zerr } = await supabase
+          .schema("roseiies")
+          .from("zones")
+          .upsert(
+            {
+              workplace_id: workplace.id,
+              asset_id: assetId,
+              code: z.code,
+              name: z.name ?? null,
+              geom: z.geom ?? null,
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: "asset_id,code" }
+          );
+
+        if (zerr) return NextResponse.json({ error: zerr.message, step }, { status: 500 });
+        zonesUpserted++;
+      }
     }
 
-    // Zones (only for beds typically, but keep generic)
-    const assetId = byCanvasId.get(canvasId)!.id;
-    const zones = zonesFromMeta(it.meta);
+    const itemsWritten = assetsInserted + assetsUpdated;
 
-    for (const z of zones) {
-      const { error: zerr } = await supabase
-        .schema("roseiies")
-        .from("zones")
-        .upsert(
-          {
-            workplace_id: workplace.id,
-            asset_id: assetId,
-            code: z.code,
-            name: z.name ?? null,
-            geom: z.geom ?? null,
-            updated_at: new Date().toISOString(),
-          },
-          // relies on unique(asset_id, code)
-          { onConflict: "asset_id,code" }
-        );
-
-      if (zerr) return NextResponse.json({ error: zerr.message }, { status: 500 });
-      zonesUpserted++;
-    }
+    step = "done";
+    return NextResponse.json({
+      ok: true,
+      workplace: { id: workplace.id, slug: workplace.slug, name: workplace.name },
+      area: { id: areaId, name: areaName },
+      layout: { id: layoutId, name: layoutName },
+      assetsInserted,
+      assetsUpdated,
+      zonesUpserted,
+      itemsWritten,
+    });
+  } catch (e: any) {
+    console.error("publish-garden-layout crashed", { step, error: e });
+    return NextResponse.json({ error: e?.message ?? "publish-garden-layout crashed", step }, { status: 500 });
   }
-
-  return NextResponse.json({
-    ok: true,
-    workplace: { id: workplace.id, slug: workplace.slug, name: workplace.name },
-    area: { id: areaId, name: gardenName },
-    layout: { id: layoutId, name: layoutName },
-    assetsInserted,
-    assetsUpdated,
-    zonesUpserted,
-  });
 }
