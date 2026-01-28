@@ -8,6 +8,7 @@ import { buildPlantingsByBed, findBed, getBeds } from "./viewer/utils";
 
 import { useResizeObserver } from "./viewer/hooks/useResizeObserver";
 import { useMapViewport } from "./viewer/hooks/useMapViewport";
+import { useMediaQuery } from "./viewer/hooks/useMediaQuery";
 
 import GardenMap from "./viewer/components/GardenMap";
 import BottomSheet from "./viewer/components/BottomSheet";
@@ -29,7 +30,6 @@ function matchesQueryText(s: string | null | undefined, q: string) {
 function matchesPlanting(p: GardenPlanting, q: string) {
   const qq = q.trim().toLowerCase();
   if (!qq) return true;
-
   return (
     (p.crop ?? "").toLowerCase().includes(qq) ||
     (p.status ?? "").toLowerCase().includes(qq) ||
@@ -48,41 +48,12 @@ export default function GardenViewer(props: {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
+  // ✅ This is the real “desktop vs mobile” switch
+  // Use 900px to feel more like “true desktop”, change to 768 if preferred.
+  const isDesktop = useMediaQuery("(min-width: 900px)");
+
   const role = props.role ?? "guest";
-
   const { ref: measureRef, size } = useResizeObserver<HTMLDivElement>();
-
-  // Desktop detection: width + pointer type
-  const [vw, setVw] = useState<number>(typeof window === "undefined" ? 0 : window.innerWidth);
-  const [pointerFine, setPointerFine] = useState<boolean>(false);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const onResize = () => setVw(window.innerWidth);
-    window.addEventListener("resize", onResize);
-    onResize();
-
-    const mq = window.matchMedia("(pointer: fine)");
-    const onPointer = () => setPointerFine(mq.matches);
-    onPointer();
-
-    if (typeof mq.addEventListener === "function") {
-      mq.addEventListener("change", onPointer);
-      return () => {
-        window.removeEventListener("resize", onResize);
-        mq.removeEventListener("change", onPointer);
-      };
-    } else {
-      mq.addListener(onPointer);
-      return () => {
-        window.removeEventListener("resize", onResize);
-        mq.removeListener(onPointer);
-      };
-    }
-  }, []);
-
-  const isDesktop = vw >= 900 && pointerFine;
 
   const beds = useMemo(() => getBeds(props.items), [props.items]);
   const plantingsByBed = useMemo(() => buildPlantingsByBed(props.plantings), [props.plantings]);
@@ -90,7 +61,6 @@ export default function GardenViewer(props: {
   const [selectedBedId, setSelectedBedId] = useState<string | null>(null);
   const [selectedPlantingId, setSelectedPlantingId] = useState<string | null>(null);
 
-  // Search
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const searchBoxRef = useRef<HTMLDivElement | null>(null);
@@ -103,13 +73,11 @@ export default function GardenViewer(props: {
   }, [plantingsByBed, selectedBedId]);
 
   const selectedBedPlantings = useMemo(() => {
-    return selectedBedPlantingsAll.filter((p: GardenPlanting) => matchesPlanting(p, query));
+    return selectedBedPlantingsAll.filter((p) => matchesPlanting(p, query));
   }, [selectedBedPlantingsAll, query]);
 
   const selectedPlanting = useMemo(() => {
-    if (selectedPlantingId) {
-      return props.plantings.find((p) => p.id === selectedPlantingId) ?? null;
-    }
+    if (selectedPlantingId) return props.plantings.find((p) => p.id === selectedPlantingId) ?? null;
     if (selectedBedId) return selectedBedPlantings[0] ?? null;
     return null;
   }, [props.plantings, selectedPlantingId, selectedBedId, selectedBedPlantings]);
@@ -122,18 +90,16 @@ export default function GardenViewer(props: {
     padding: 140,
   });
 
-  // Fit once
   const didFitRef = useRef(false);
   useEffect(() => {
     if (!mounted) return;
     if (didFitRef.current) return;
     if (size.width <= 0 || size.height <= 0) return;
-
     didFitRef.current = true;
     viewport.fitToContent();
   }, [mounted, size.width, size.height, viewport]);
 
-  // Mobile sheet state (only used on mobile)
+  // Mobile sheet state (only used when !isDesktop)
   const [sheetSnap, setSheetSnap] = useState<"collapsed" | "medium" | "large">("collapsed");
   const openToMedium = () => setSheetSnap("medium");
   const openToLarge = () => setSheetSnap("large");
@@ -144,7 +110,7 @@ export default function GardenViewer(props: {
     setSheetSnap("collapsed");
   };
 
-  const selectBedById = (bedId: string) => {
+  const selectBed = (bedId: string) => {
     setSelectedBedId(bedId);
     setSelectedPlantingId(null);
 
@@ -154,7 +120,7 @@ export default function GardenViewer(props: {
     if (!isDesktop) openToMedium();
   };
 
-  const selectPlantingById = (bedId: string, plantingId: string) => {
+  const selectPin = (bedId: string, plantingId: string) => {
     setSelectedBedId(bedId);
     setSelectedPlantingId(plantingId);
 
@@ -197,16 +163,13 @@ export default function GardenViewer(props: {
       .slice(0, 10);
   }, [props.plantings, beds, query]);
 
-  // Close search on outside click
   useEffect(() => {
     if (!mounted) return;
-
     function onDown(e: MouseEvent) {
       const el = searchBoxRef.current;
       if (!el) return;
       if (!el.contains(e.target as Node)) setSearchOpen(false);
     }
-
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
   }, [mounted]);
@@ -222,38 +185,40 @@ export default function GardenViewer(props: {
       ) : (
         <>
           {/* Search overlay */}
-          <div ref={searchBoxRef} className="fixed left-4 top-4 z-90 pointer-events-auto">
-            <SearchBar
-              value={query}
-              onChange={(v) => {
-                setQuery(v);
-                setSearchOpen(true);
-              }}
-              onFocus={() => setSearchOpen(true)}
-              placeholder="Search crops, notes, beds…"
-              onKeyDown={(e) => {
-                if (e.key === "Escape") setSearchOpen(false);
-                if (e.key === "Enter") {
-                  if (cropResults[0]) {
-                    selectPlantingById(cropResults[0].bedId, cropResults[0].plantingId);
-                    setSearchOpen(false);
-                  } else if (bedResults[0]) {
-                    selectBedById(bedResults[0].id);
-                    setSearchOpen(false);
+          <div ref={searchBoxRef} className="pointer-events-none absolute left-4 top-4 z-50">
+            <div className="pointer-events-auto">
+              <SearchBar
+                value={query}
+                onChange={(v) => {
+                  setQuery(v);
+                  setSearchOpen(true);
+                }}
+                onFocus={() => setSearchOpen(true)}
+                placeholder="Search crops, notes, beds…"
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") setSearchOpen(false);
+                  if (e.key === "Enter") {
+                    if (cropResults[0]) {
+                      selectPin(cropResults[0].bedId, cropResults[0].plantingId);
+                      setSearchOpen(false);
+                    } else if (bedResults[0]) {
+                      selectBed(bedResults[0].id);
+                      setSearchOpen(false);
+                    }
                   }
-                }
-              }}
-            />
+                }}
+              />
 
-            <SearchResultsPopover
-              open={searchOpen && query.trim().length > 0}
-              query={query}
-              bedResults={bedResults}
-              cropResults={cropResults}
-              onPickBed={(bedId) => selectBedById(bedId)}
-              onPickCrop={(bedId, plantingId) => selectPlantingById(bedId, plantingId)}
-              onClose={() => setSearchOpen(false)}
-            />
+              <SearchResultsPopover
+                open={searchOpen && query.trim().length > 0}
+                query={query}
+                bedResults={bedResults}
+                cropResults={cropResults}
+                onPickBed={(bedId) => selectBed(bedId)}
+                onPickCrop={(bedId, plantingId) => selectPin(bedId, plantingId)}
+                onClose={() => setSearchOpen(false)}
+              />
+            </div>
           </div>
 
           {/* Map */}
@@ -266,8 +231,8 @@ export default function GardenViewer(props: {
             items={props.items}
             plantingsByBed={plantingsByBed}
             selectedBedId={selectedBedId}
-            onSelectBed={selectBedById}
-            onSelectPin={selectPlantingById}
+            onSelectBed={selectBed}
+            onSelectPin={selectPin}
             onTapBackground={clearSelection}
             onWheel={viewport.onWheel}
             onTouchStart={viewport.onTouchStart}
@@ -278,7 +243,7 @@ export default function GardenViewer(props: {
 
           <FloatingControls onReset={viewport.fitToContent} />
 
-          {/* Desktop only: left dock */}
+          {/* ✅ Desktop: Left Dock */}
           {isDesktop ? (
             <DesktopPlacePanel
               open={true}
@@ -290,7 +255,7 @@ export default function GardenViewer(props: {
             />
           ) : null}
 
-          {/* Mobile only: bottom cards */}
+          {/* ✅ Mobile: Button cards sheet */}
           {!isDesktop ? (
             <BottomSheet
               open={true}

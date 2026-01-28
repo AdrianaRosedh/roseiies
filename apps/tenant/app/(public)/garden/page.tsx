@@ -1,43 +1,26 @@
-import GardenViewer from "@/components/garden/GardenViewer";
-import { loadPublishedGardenLayout } from "@/lib/garden/load-published-layout";
-import { loadGardenPlantings } from "@/lib/garden/load-plantings";
+// apps/tenant/app/(public)/garden/page.tsx
+import { getRequestTheme } from "@lib/tenant";
+import GardenLiveViewer from "@/components/garden/GardenLiveViewer";
 
 export default async function GardenPublicPage() {
-  const tenantId = "olivea"; // keep for now
-
-  const data = await loadPublishedGardenLayout(tenantId);
-
-  const plantings =
-    data?.layout?.garden_id
-      ? await loadGardenPlantings({ tenantId, gardenId: data.layout.garden_id })
-      : [];
+  const theme = await getRequestTheme();
 
   return (
-    <main className="relative h-dvh w-screen overflow-hidden bg-(--rose-bg)">
-      {/* header overlay */}
-      <div className="pointer-events-none absolute left-4 top-4 z-20">
-        <div className="pointer-events-auto rounded-2xl border border-(--rose-border) bg-(--rose-surface)/80 backdrop-blur px-4 py-3 shadow-sm">
-          <div className="text-sm text-(--rose-muted)">Olivea</div>
-          <h1 className="text-lg font-semibold text-(--rose-ink)">Olivea — Garden</h1>
+    <main className="relative h-svh w-full overflow-hidden">
+      {/* Simple top-left title overlay (optional) */}
+      <div className="pointer-events-none absolute left-5 top-5 z-20">
+        <div className="rounded-2xl border border-black/10 bg-white/75 px-4 py-3 backdrop-blur">
+          <div className="text-[12px] tracking-wide text-black/45">Olivea</div>
+          <h1 className="text-[18px] font-semibold text-black/85">
+            {theme.displayName} — Garden
+          </h1>
         </div>
       </div>
 
-      {!data ? (
-        <div className="absolute inset-0 grid place-items-center p-6">
-          <div className="rounded-2xl border border-(--rose-border) bg-(--rose-surface) backdrop-blur shadow-sm p-6 text-sm text-(--rose-muted)">
-            No published layout found yet.
-          </div>
-        </div>
-      ) : (
-        <div className="absolute inset-0">
-          <GardenViewer
-            canvas={data.layout.canvas}
-            items={data.items}
-            plantings={plantings}
-            role="guest"
-          />
-        </div>
-      )}
+      {/* Full-bleed viewer */}
+      <div className="absolute inset-0">
+        <GardenLiveViewer workplaceSlug="olivea" areaName="Garden" />
+      </div>
     </main>
   );
 }

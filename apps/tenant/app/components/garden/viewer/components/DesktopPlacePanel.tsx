@@ -1,3 +1,4 @@
+// apps/tenant/app/components/garden/viewer/components/DesktopPlacePanel.tsx
 "use client";
 
 import type { GardenPlanting } from "@/lib/garden/load-plantings";
@@ -15,28 +16,36 @@ export default function DesktopPlacePanel(props: {
   if (!props.open) return null;
 
   return (
-    // ✅ FIXED overlay — never pushes the canvas
+    // ✅ fixed overlay — never pushes the canvas
     <div className="fixed left-4 top-24 z-70 w-95 pointer-events-auto">
-      <div className="rounded-2xl border border-(--rose-border) bg-(--rose-surface)/92 backdrop-blur shadow-sm overflow-hidden">
+      <div
+        className="rounded-2xl border backdrop-blur shadow-sm overflow-hidden"
+        style={{
+          borderColor: "var(--rose-border)",
+          backgroundColor: "color-mix(in srgb, var(--rose-surface) 92%, transparent)",
+        }}
+      >
         <div className="p-4">
           {!props.bedLabel ? (
-            <div className="text-sm text-(--rose-muted)">
+            <div className="text-sm" style={{ color: "var(--rose-muted)" }}>
               Search or click a bed (or a pin) to see what’s growing.
             </div>
           ) : (
             <>
-              <div className="text-xs text-(--rose-muted)">Bed</div>
-              <div className="mt-1 text-lg font-semibold text-(--rose-ink)">
+              <div className="text-xs" style={{ color: "var(--rose-muted)" }}>
+                Bed
+              </div>
+              <div className="mt-1 text-lg font-semibold" style={{ color: "var(--rose-ink)" }}>
                 {props.bedLabel}
               </div>
 
               {props.plantings.length === 0 ? (
-                <div className="mt-3 text-sm text-(--rose-muted)">
+                <div className="mt-3 text-sm" style={{ color: "var(--rose-muted)" }}>
                   No plantings for this bed (or no matches).
                 </div>
               ) : (
                 <>
-                  <div className="mt-2 text-xs text-(--rose-muted)">
+                  <div className="mt-2 text-xs" style={{ color: "var(--rose-muted)" }}>
                     Plantings: {props.plantings.length}
                   </div>
                   <PlantCardsRow

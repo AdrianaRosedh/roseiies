@@ -28,6 +28,21 @@ function normalizeData(json: any): ViewerData {
   };
 }
 
+function Card(props: { children: React.ReactNode }) {
+  return (
+    <div
+      className="rounded-2xl border backdrop-blur shadow-sm p-6 text-sm"
+      style={{
+        borderColor: "var(--rose-border)",
+        backgroundColor: "var(--rose-surface)",
+        color: "var(--rose-muted)",
+      }}
+    >
+      {props.children}
+    </div>
+  );
+}
+
 export default function GardenLiveViewer(props: {
   workplaceSlug?: string;
   areaName?: string;
@@ -132,21 +147,25 @@ export default function GardenLiveViewer(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ctx?.areaId, ctx?.layoutId]);
 
-  if (err) {
-    return (
-      <div className="rounded-2xl border border-(--rose-border) bg-(--rose-surface) backdrop-blur shadow-sm p-6 text-sm text-(--rose-muted)">
-        {err}
-      </div>
-    );
-  }
-
-  if (!ctx || !data) {
-    return (
-      <div className="rounded-2xl border border-(--rose-border) bg-(--rose-surface) backdrop-blur shadow-sm p-6 text-sm text-(--rose-muted)">
-        Loading garden…
-      </div>
-    );
-  }
-
-  return <GardenViewer canvas={data.canvas} items={data.items} plantings={data.plantings} role="guest" />;
+  return (
+    // ✅ critical: viewer fills parent
+    <div className="relative h-full w-full">
+      {err ? (
+        <div className="absolute inset-0 p-6">
+          <Card>{err}</Card>
+        </div>
+      ) : !ctx || !data ? (
+        <div className="absolute inset-0 p-6">
+          <Card>Loading garden…</Card>
+        </div>
+      ) : (
+        <GardenViewer
+          canvas={data.canvas}
+          items={data.items}
+          plantings={data.plantings}
+          role="guest"
+        />
+      )}
+    </div>
+  );
 }
