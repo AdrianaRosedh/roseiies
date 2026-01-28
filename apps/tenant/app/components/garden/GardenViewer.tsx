@@ -246,7 +246,11 @@ export default function GardenViewer(props: {
           {/* ✅ Desktop: Left Dock */}
           {isDesktop ? (
             <DesktopPlacePanel
-              open={true}
+              open={
+                Boolean(selectedBedId) ||
+                Boolean(selectedPlantingId) ||
+                query.trim().length > 0
+              }
               bedLabel={selectedBed ? selectedBed.label : null}
               role={role}
               plantings={selectedBedPlantings}
@@ -254,6 +258,7 @@ export default function GardenViewer(props: {
               onSelectPlanting={(id) => setSelectedPlantingId(id)}
             />
           ) : null}
+
 
           {/* ✅ Mobile: Button cards sheet */}
           {!isDesktop ? (
