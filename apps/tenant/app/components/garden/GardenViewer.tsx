@@ -1,235 +1,333 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Stage, Layer, Rect, Text, Group, Circle } from "react-konva";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { GardenPlanting } from "@/lib/garden/load-plantings";
 
-type Item = {
-  id: string;
-  type: string;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  r: number;
-  order: number;
-  label: string;
-  meta: any;
-  style: any;
-};
+import type { Item, Role } from "./viewer/types";
+import { buildPlantingsByBed, findBed, getBeds } from "./viewer/utils";
 
-type Role = "guest" | "gardener" | "kitchen";
+import { useResizeObserver } from "./viewer/hooks/useResizeObserver";
+import { useMapViewport } from "./viewer/hooks/useMapViewport";
 
-function rgba(hex: string, opacity: number) {
-  const h = String(hex ?? "#010506").replace("#", "").trim();
-  const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
-  const r = parseInt(full.slice(0, 2), 16);
-  const g = parseInt(full.slice(2, 4), 16);
-  const b = parseInt(full.slice(4, 6), 16);
-  return `rgba(${r},${g},${b},${opacity})`;
+import GardenMap from "./viewer/components/GardenMap";
+import BottomSheet from "./viewer/components/BottomSheet";
+import PlantCardsRow from "./viewer/components/PlantCardsRow";
+import DesktopPlacePanel from "./viewer/components/DesktopPlacePanel";
+import FloatingControls from "./viewer/components/FloatingControls";
+import SearchBar from "./viewer/components/SearchBar";
+import SearchResultsPopover, {
+  type BedResult,
+  type CropResult,
+} from "./viewer/components/SearchResultsPopover";
+
+function matchesQueryText(s: string | null | undefined, q: string) {
+  const qq = q.trim().toLowerCase();
+  if (!qq) return true;
+  return String(s ?? "").toLowerCase().includes(qq);
 }
 
-function roleCard(p: GardenPlanting, role: Role) {
-  if (role === "guest") {
-    return {
-      title: p.crop,
-      subtitle: p.status ?? "growing",
-      body: p.guest_story ?? "",
-    };
-  }
-  if (role === "gardener") {
-    return {
-      title: p.crop,
-      subtitle: p.planted_at ? `planted: ${p.planted_at}` : "ops",
-      body: p.gardener_notes ?? "",
-    };
-  }
-  return {
-    title: p.crop,
-    subtitle: p.status ?? "kitchen",
-    body: p.kitchen_notes ?? "",
-  };
+function matchesPlanting(p: GardenPlanting, q: string) {
+  const qq = q.trim().toLowerCase();
+  if (!qq) return true;
+
+  return (
+    (p.crop ?? "").toLowerCase().includes(qq) ||
+    (p.status ?? "").toLowerCase().includes(qq) ||
+    (p.guest_story ?? "").toLowerCase().includes(qq) ||
+    (p.gardener_notes ?? "").toLowerCase().includes(qq) ||
+    (p.kitchen_notes ?? "").toLowerCase().includes(qq)
+  );
 }
 
-export default function GardenViewer({
-  canvas,
-  items,
-  plantings,
-  role = "guest",
-}: {
+export default function GardenViewer(props: {
   canvas: { width: number; height: number };
   items: Item[];
   plantings: GardenPlanting[];
   role?: Role;
 }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  const role = props.role ?? "guest";
+
+  const { ref: measureRef, size } = useResizeObserver<HTMLDivElement>();
+
+  // Desktop detection: width + pointer type
+  const [vw, setVw] = useState<number>(typeof window === "undefined" ? 0 : window.innerWidth);
+  const [pointerFine, setPointerFine] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const onResize = () => setVw(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    onResize();
+
+    const mq = window.matchMedia("(pointer: fine)");
+    const onPointer = () => setPointerFine(mq.matches);
+    onPointer();
+
+    if (typeof mq.addEventListener === "function") {
+      mq.addEventListener("change", onPointer);
+      return () => {
+        window.removeEventListener("resize", onResize);
+        mq.removeEventListener("change", onPointer);
+      };
+    } else {
+      mq.addListener(onPointer);
+      return () => {
+        window.removeEventListener("resize", onResize);
+        mq.removeListener(onPointer);
+      };
+    }
+  }, []);
+
+  const isDesktop = vw >= 900 && pointerFine;
+
+  const beds = useMemo(() => getBeds(props.items), [props.items]);
+  const plantingsByBed = useMemo(() => buildPlantingsByBed(props.plantings), [props.plantings]);
+
   const [selectedBedId, setSelectedBedId] = useState<string | null>(null);
   const [selectedPlantingId, setSelectedPlantingId] = useState<string | null>(null);
 
-  const beds = useMemo(() => items.filter((i) => i.type === "bed"), [items]);
+  // Search
+  const [query, setQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchBoxRef = useRef<HTMLDivElement | null>(null);
 
-  const plantingsByBed = useMemo(() => {
-    const m = new Map<string, GardenPlanting[]>();
-    for (const p of plantings) {
-      const arr = m.get(p.bed_id) ?? [];
-      arr.push(p);
-      m.set(p.bed_id, arr);
-    }
-    return m;
-  }, [plantings]);
+  const selectedBed = useMemo(() => findBed(beds, selectedBedId), [beds, selectedBedId]);
 
-  const selectedBed = useMemo(
-    () => (selectedBedId ? beds.find((b) => b.id === selectedBedId) ?? null : null),
-    [beds, selectedBedId]
-  );
+  const selectedBedPlantingsAll = useMemo(() => {
+    if (!selectedBedId) return [];
+    return plantingsByBed.get(selectedBedId) ?? [];
+  }, [plantingsByBed, selectedBedId]);
+
+  const selectedBedPlantings = useMemo(() => {
+    return selectedBedPlantingsAll.filter((p: GardenPlanting) => matchesPlanting(p, query));
+  }, [selectedBedPlantingsAll, query]);
 
   const selectedPlanting = useMemo(() => {
-    if (selectedPlantingId) return plantings.find((p) => p.id === selectedPlantingId) ?? null;
-    if (selectedBedId) {
-      const list = plantingsByBed.get(selectedBedId) ?? [];
-      return list[0] ?? null;
+    if (selectedPlantingId) {
+      return props.plantings.find((p) => p.id === selectedPlantingId) ?? null;
     }
+    if (selectedBedId) return selectedBedPlantings[0] ?? null;
     return null;
-  }, [plantings, plantingsByBed, selectedBedId, selectedPlantingId]);
+  }, [props.plantings, selectedPlantingId, selectedBedId, selectedBedPlantings]);
 
-  // Roseiies accents
-  const ROSE_BLUE = "#10bbbf";
+  const viewport = useMapViewport({
+    viewportWidth: size.width,
+    viewportHeight: size.height,
+    contentWidth: props.canvas.width,
+    contentHeight: props.canvas.height,
+    padding: 140,
+  });
+
+  // Fit once
+  const didFitRef = useRef(false);
+  useEffect(() => {
+    if (!mounted) return;
+    if (didFitRef.current) return;
+    if (size.width <= 0 || size.height <= 0) return;
+
+    didFitRef.current = true;
+    viewport.fitToContent();
+  }, [mounted, size.width, size.height, viewport]);
+
+  // Mobile sheet state (only used on mobile)
+  const [sheetSnap, setSheetSnap] = useState<"collapsed" | "medium" | "large">("collapsed");
+  const openToMedium = () => setSheetSnap("medium");
+  const openToLarge = () => setSheetSnap("large");
+
+  const clearSelection = () => {
+    setSelectedBedId(null);
+    setSelectedPlantingId(null);
+    setSheetSnap("collapsed");
+  };
+
+  const selectBedById = (bedId: string) => {
+    setSelectedBedId(bedId);
+    setSelectedPlantingId(null);
+
+    const bed = beds.find((b) => b.id === bedId);
+    if (bed) viewport.focusBed(bed);
+
+    if (!isDesktop) openToMedium();
+  };
+
+  const selectPlantingById = (bedId: string, plantingId: string) => {
+    setSelectedBedId(bedId);
+    setSelectedPlantingId(plantingId);
+
+    const bed = beds.find((b) => b.id === bedId);
+    if (bed) viewport.focusBed(bed);
+
+    if (!isDesktop) openToLarge();
+  };
+
+  // Search results
+  const bedResults: BedResult[] = useMemo(() => {
+    const q = query.trim();
+    if (!q) return [];
+    return beds
+      .filter((b) => matchesQueryText(b.label, q))
+      .slice(0, 8)
+      .map((b) => ({ id: b.id, label: b.label }));
+  }, [beds, query]);
+
+  const cropResults: CropResult[] = useMemo(() => {
+    const q = query.trim();
+    if (!q) return [];
+    const out: CropResult[] = [];
+
+    for (const p of props.plantings) {
+      if (!matchesPlanting(p, q)) continue;
+      const bed = beds.find((b) => b.id === p.bed_id);
+      out.push({
+        plantingId: p.id,
+        crop: p.crop ?? "Unknown",
+        bedId: p.bed_id,
+        bedLabel: bed?.label ?? "Bed",
+        subtitle: p.status ?? undefined,
+      });
+    }
+
+    const seen = new Set<string>();
+    return out
+      .filter((r) => (seen.has(r.plantingId) ? false : (seen.add(r.plantingId), true)))
+      .slice(0, 10);
+  }, [props.plantings, beds, query]);
+
+  // Close search on outside click
+  useEffect(() => {
+    if (!mounted) return;
+
+    function onDown(e: MouseEvent) {
+      const el = searchBoxRef.current;
+      if (!el) return;
+      if (!el.contains(e.target as Node)) setSearchOpen(false);
+    }
+
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [mounted]);
+
+  const ready = mounted && size.width > 0 && size.height > 0;
 
   return (
-    <div className="grid gap-4 md:grid-cols-[1fr_340px]">
-      {/* Canvas panel */}
-      <div className="w-full overflow-hidden rounded-2xl border border-(--rose-border) bg-(--rose-surface) backdrop-blur shadow-sm">
-        <Stage width={900} height={560}>
-          <Layer>
-            {/* Light stage background (NOT dark) */}
-            <Rect x={0} y={0} width={900} height={560} fill="rgba(255,255,255,0.22)" />
+    <div ref={measureRef} className="relative h-full w-full">
+      {!ready ? (
+        <div className="absolute inset-0 grid place-items-center">
+          <div className="text-sm text-(--rose-muted)">Loading map…</div>
+        </div>
+      ) : (
+        <>
+          {/* Search overlay */}
+          <div ref={searchBoxRef} className="fixed left-4 top-4 z-90 pointer-events-auto">
+            <SearchBar
+              value={query}
+              onChange={(v) => {
+                setQuery(v);
+                setSearchOpen(true);
+              }}
+              onFocus={() => setSearchOpen(true)}
+              placeholder="Search crops, notes, beds…"
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setSearchOpen(false);
+                if (e.key === "Enter") {
+                  if (cropResults[0]) {
+                    selectPlantingById(cropResults[0].bedId, cropResults[0].plantingId);
+                    setSearchOpen(false);
+                  } else if (bedResults[0]) {
+                    selectBedById(bedResults[0].id);
+                    setSearchOpen(false);
+                  }
+                }
+              }}
+            />
 
-            <Group x={24} y={24}>
-              {/* Canvas boundary */}
-              <Rect
-                x={0}
-                y={0}
-                width={canvas.width}
-                height={canvas.height}
-                fill="rgba(255,255,255,0.16)"
-                stroke="rgba(1,5,6,0.10)"
-                strokeWidth={2}
-                cornerRadius={18}
-              />
-
-              {items.map((it) => {
-                const s = it.style ?? {};
-                const fill = rgba(s.fill ?? "#e9e2d6", s.fillOpacity ?? 0.86);
-                const stroke = rgba(s.stroke ?? "#010506", s.strokeOpacity ?? 0.10);
-                const radius = s.radius ?? 16;
-                const strokeWidth = s.strokeWidth ?? 1.2;
-
-                const isBed = it.type === "bed";
-                const isSelected = isBed && it.id === selectedBedId;
-
-                return (
-                  <Group
-                    key={it.id}
-                    x={it.x}
-                    y={it.y}
-                    rotation={it.r}
-                    onClick={() => {
-                      if (!isBed) return;
-                      setSelectedPlantingId(null);
-                      setSelectedBedId(it.id);
-                    }}
-                  >
-                    <Rect
-                      width={it.w}
-                      height={it.h}
-                      fill={fill}
-                      stroke={isSelected ? ROSE_BLUE : stroke}
-                      strokeWidth={isSelected ? 2.4 : strokeWidth}
-                      cornerRadius={radius}
-                    />
-
-                    <Text
-                      x={12}
-                      y={10}
-                      text={it.label}
-                      fontSize={14}
-                      fill="rgba(1,5,6,0.62)"
-                      listening={false}
-                    />
-
-                    {/* Pins for this bed */}
-                    {isBed &&
-                      (plantingsByBed.get(it.id) ?? [])
-                        .filter((p) => p.pin_x != null && p.pin_y != null)
-                        .map((p) => (
-                          <Circle
-                            key={p.id}
-                            x={(p.pin_x as number) * it.w}
-                            y={(p.pin_y as number) * it.h}
-                            radius={6}
-                            fill={ROSE_BLUE}
-                            stroke="rgba(1,5,6,0.18)"
-                            strokeWidth={1}
-                            onClick={(e) => {
-                              e.cancelBubble = true;
-                              setSelectedBedId(it.id);
-                              setSelectedPlantingId(p.id);
-                            }}
-                          />
-                        ))}
-                  </Group>
-                );
-              })}
-            </Group>
-          </Layer>
-        </Stage>
-      </div>
-
-      {/* Info panel */}
-      <aside className="rounded-2xl border border-(--rose-border) bg-(--rose-surface) backdrop-blur shadow-sm p-5">
-        {!selectedBed ? (
-          <div className="text-sm text-(--rose-muted)">
-            Click a bed (or a pin) to see what’s growing.
+            <SearchResultsPopover
+              open={searchOpen && query.trim().length > 0}
+              query={query}
+              bedResults={bedResults}
+              cropResults={cropResults}
+              onPickBed={(bedId) => selectBedById(bedId)}
+              onPickCrop={(bedId, plantingId) => selectPlantingById(bedId, plantingId)}
+              onClose={() => setSearchOpen(false)}
+            />
           </div>
-        ) : (
-          <>
-            <div className="text-xs text-(--rose-muted)">Bed</div>
-            <div className="mt-1 text-lg font-semibold text-(--rose-ink)">
-              {selectedBed.label}
-            </div>
 
-            <div className="mt-4 border-t border-(--rose-border) pt-4">
-              {!selectedPlanting ? (
+          {/* Map */}
+          <GardenMap
+            stageRefSetter={viewport.setStageRef}
+            viewport={{ width: size.width, height: size.height }}
+            vp={viewport.vp}
+            isPinching={viewport.isPinching}
+            canvas={props.canvas}
+            items={props.items}
+            plantingsByBed={plantingsByBed}
+            selectedBedId={selectedBedId}
+            onSelectBed={selectBedById}
+            onSelectPin={selectPlantingById}
+            onTapBackground={clearSelection}
+            onWheel={viewport.onWheel}
+            onTouchStart={viewport.onTouchStart}
+            onTouchMove={viewport.onTouchMove}
+            onTouchEnd={viewport.onTouchEnd}
+            onDragEnd={(pos) => viewport.setVp((p) => ({ ...p, x: pos.x, y: pos.y }))}
+          />
+
+          <FloatingControls onReset={viewport.fitToContent} />
+
+          {/* Desktop only: left dock */}
+          {isDesktop ? (
+            <DesktopPlacePanel
+              open={true}
+              bedLabel={selectedBed ? selectedBed.label : null}
+              role={role}
+              plantings={selectedBedPlantings}
+              selectedPlantingId={selectedPlanting?.id ?? null}
+              onSelectPlanting={(id) => setSelectedPlantingId(id)}
+            />
+          ) : null}
+
+          {/* Mobile only: bottom cards */}
+          {!isDesktop ? (
+            <BottomSheet
+              open={true}
+              snap={sheetSnap}
+              onSnapChange={setSheetSnap}
+              subtitle={selectedBed ? "Bed" : undefined}
+              title={selectedBed ? selectedBed.label : "Garden"}
+            >
+              {!selectedBed ? (
                 <div className="text-sm text-(--rose-muted)">
-                  No plantings for this bed yet.
+                  Pinch to zoom. Drag to pan. Tap a bed (or a pin) to open plant cards.
+                </div>
+              ) : selectedBedPlantings.length === 0 ? (
+                <div className="text-sm text-(--rose-muted)">
+                  No plantings match your search for this bed.
                 </div>
               ) : (
-                (() => {
-                  const card = roleCard(selectedPlanting, role);
-                  return (
-                    <div className="space-y-2">
-                      <div className="text-xs text-(--rose-muted)">{card.subtitle}</div>
-                      <div className="text-xl font-semibold text-(--rose-ink)">{card.title}</div>
-                      {card.body ? (
-                        <p className="text-sm leading-relaxed text-(--rose-ink) opacity-80">
-                          {card.body}
-                        </p>
-                      ) : (
-                        <p className="text-sm text-(--rose-muted)">
-                          (No notes yet for this role.)
-                        </p>
-                      )}
-                    </div>
-                  );
-                })()
-              )}
-            </div>
+                <>
+                  <div className="text-xs text-(--rose-muted)">
+                    Plantings: {selectedBedPlantings.length}
+                  </div>
 
-            <div className="mt-5 text-xs text-(--rose-muted)">
-              Plantings in this bed: {(plantingsByBed.get(selectedBed.id) ?? []).length}
-            </div>
-          </>
-        )}
-      </aside>
+                  <PlantCardsRow
+                    plantings={selectedBedPlantings}
+                    role={role}
+                    selectedPlantingId={selectedPlanting?.id ?? null}
+                    onSelectPlanting={(id) => {
+                      setSelectedPlantingId(id);
+                      setSheetSnap("large");
+                    }}
+                  />
+                </>
+              )}
+            </BottomSheet>
+          ) : null}
+        </>
+      )}
     </div>
   );
 }

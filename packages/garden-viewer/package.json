@@ -1,0 +1,13 @@
+{
+  "name": "@roseiies/garden-viewer",
+  "version": "0.0.0",
+  "private": true,
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  }
+}
