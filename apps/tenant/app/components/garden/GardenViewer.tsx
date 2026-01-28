@@ -1,3 +1,4 @@
+// apps/tenant/app/components/garden/GardenViewer.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -39,6 +40,23 @@ function matchesPlanting(p: GardenPlanting, q: string) {
   );
 }
 
+/**
+ * IMPORTANT:
+ * Canvas beds often have their own id (item.id).
+ * Plantings are keyed by DB planting.bed_id.
+ * If your bed items include DB bed id somewhere, we should use it.
+ */
+function bedKey(bed: any): string {
+  return (
+    bed?.bed_id ??
+    bed?.meta?.bed_id ??
+    bed?.data?.bed_id ??
+    bed?.db_id ??
+    bed?.meta?.db_id ??
+    bed?.id // fallback
+  );
+}
+
 export default function GardenViewer(props: {
   canvas: { width: number; height: number };
   items: Item[];
@@ -48,46 +66,60 @@ export default function GardenViewer(props: {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
-  // ✅ This is the real “desktop vs mobile” switch
-  // Use 900px to feel more like “true desktop”, change to 768 if preferred.
   const isDesktop = useMediaQuery("(min-width: 900px)");
-
   const role = props.role ?? "guest";
+
   const { ref: measureRef, size } = useResizeObserver<HTMLDivElement>();
 
   const beds = useMemo(() => getBeds(props.items), [props.items]);
-  const plantingsByBed = useMemo(() => buildPlantingsByBed(props.plantings), [props.plantings]);
+  const plantingsByBed = useMemo(
+    () => buildPlantingsByBed(props.plantings),
+    [props.plantings]
+  );
 
   const [selectedBedId, setSelectedBedId] = useState<string | null>(null);
-  const [selectedPlantingId, setSelectedPlantingId] = useState<string | null>(null);
+  const [selectedPlantingId, setSelectedPlantingId] = useState<string | null>(
+    null
+  );
 
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const searchBoxRef = useRef<HTMLDivElement | null>(null);
 
-  const selectedBed = useMemo(() => findBed(beds, selectedBedId), [beds, selectedBedId]);
+  const selectedBed = useMemo(
+    () => findBed(beds, selectedBedId),
+    [beds, selectedBedId]
+  );
 
+  // ✅ FIX: use bedKey(selectedBed) rather than selectedBedId
   const selectedBedPlantingsAll = useMemo(() => {
-    if (!selectedBedId) return [];
-    return plantingsByBed.get(selectedBedId) ?? [];
-  }, [plantingsByBed, selectedBedId]);
+    if (!selectedBed) return [];
+    const key = bedKey(selectedBed);
+    return plantingsByBed.get(key) ?? [];
+  }, [plantingsByBed, selectedBed]);
 
   const selectedBedPlantings = useMemo(() => {
     return selectedBedPlantingsAll.filter((p) => matchesPlanting(p, query));
   }, [selectedBedPlantingsAll, query]);
 
   const selectedPlanting = useMemo(() => {
-    if (selectedPlantingId) return props.plantings.find((p) => p.id === selectedPlantingId) ?? null;
+    if (selectedPlantingId) {
+      return (
+        props.plantings.find((p) => p.id === selectedPlantingId) ?? null
+      );
+    }
     if (selectedBedId) return selectedBedPlantings[0] ?? null;
     return null;
   }, [props.plantings, selectedPlantingId, selectedBedId, selectedBedPlantings]);
+
+  const fitPadding = isDesktop ? 72 : 140;
 
   const viewport = useMapViewport({
     viewportWidth: size.width,
     viewportHeight: size.height,
     contentWidth: props.canvas.width,
     contentHeight: props.canvas.height,
-    padding: 140,
+    padding: fitPadding,
   });
 
   const didFitRef = useRef(false);
@@ -99,8 +131,9 @@ export default function GardenViewer(props: {
     viewport.fitToContent();
   }, [mounted, size.width, size.height, viewport]);
 
-  // Mobile sheet state (only used when !isDesktop)
-  const [sheetSnap, setSheetSnap] = useState<"collapsed" | "medium" | "large">("collapsed");
+  const [sheetSnap, setSheetSnap] = useState<
+    "collapsed" | "medium" | "large"
+  >("collapsed");
   const openToMedium = () => setSheetSnap("medium");
   const openToLarge = () => setSheetSnap("large");
 
@@ -115,7 +148,8 @@ export default function GardenViewer(props: {
     setSelectedPlantingId(null);
 
     const bed = beds.find((b) => b.id === bedId);
-    if (bed) viewport.focusBed(bed);
+    // ✅ no zoom jump
+    if (bed && "panToBed" in viewport) (viewport as any).panToBed(bed);
 
     if (!isDesktop) openToMedium();
   };
@@ -125,12 +159,12 @@ export default function GardenViewer(props: {
     setSelectedPlantingId(plantingId);
 
     const bed = beds.find((b) => b.id === bedId);
-    if (bed) viewport.focusBed(bed);
+    // ✅ no zoom jump
+    if (bed && "panToBed" in viewport) (viewport as any).panToBed(bed);
 
     if (!isDesktop) openToLarge();
   };
 
-  // Search results
   const bedResults: BedResult[] = useMemo(() => {
     const q = query.trim();
     if (!q) return [];
@@ -147,6 +181,7 @@ export default function GardenViewer(props: {
 
     for (const p of props.plantings) {
       if (!matchesPlanting(p, q)) continue;
+      // NOTE: this uses p.bed_id, which is DB id, not canvas id
       const bed = beds.find((b) => b.id === p.bed_id);
       out.push({
         plantingId: p.id,
@@ -159,7 +194,9 @@ export default function GardenViewer(props: {
 
     const seen = new Set<string>();
     return out
-      .filter((r) => (seen.has(r.plantingId) ? false : (seen.add(r.plantingId), true)))
+      .filter((r) =>
+        seen.has(r.plantingId) ? false : (seen.add(r.plantingId), true)
+      )
       .slice(0, 10);
   }, [props.plantings, beds, query]);
 
@@ -176,8 +213,18 @@ export default function GardenViewer(props: {
 
   const ready = mounted && size.width > 0 && size.height > 0;
 
+  const openDesktopPanel =
+    isDesktop &&
+    (Boolean(selectedBedId) ||
+      Boolean(selectedPlantingId) ||
+      query.trim().length > 0);
+
   return (
-    <div ref={measureRef} className="relative h-full w-full">
+    <div
+      ref={measureRef}
+      className="relative h-full w-full overflow-hidden"
+      style={{ overscrollBehavior: "none" }}
+    >
       {!ready ? (
         <div className="absolute inset-0 grid place-items-center">
           <div className="text-sm text-(--rose-muted)">Loading map…</div>
@@ -185,7 +232,7 @@ export default function GardenViewer(props: {
       ) : (
         <>
           {/* Search overlay */}
-          <div ref={searchBoxRef} className="pointer-events-none absolute left-4 top-4 z-50">
+          <div ref={searchBoxRef} className="pointer-events-none absolute left-4 top-4 z-90">
             <div className="pointer-events-auto">
               <SearchBar
                 value={query}
@@ -241,26 +288,24 @@ export default function GardenViewer(props: {
             onDragEnd={(pos) => viewport.setVp((p) => ({ ...p, x: pos.x, y: pos.y }))}
           />
 
-          <FloatingControls onReset={viewport.fitToContent} />
+          {/* Floating controls */}
+          <div className="absolute inset-0 z-85 pointer-events-none">
+            <div className="pointer-events-auto">
+              <FloatingControls onReset={viewport.fitToContent} />
+            </div>
+          </div>
 
-          {/* ✅ Desktop: Left Dock */}
-          {isDesktop ? (
-            <DesktopPlacePanel
-              open={
-                Boolean(selectedBedId) ||
-                Boolean(selectedPlantingId) ||
-                query.trim().length > 0
-              }
-              bedLabel={selectedBed ? selectedBed.label : null}
-              role={role}
-              plantings={selectedBedPlantings}
-              selectedPlantingId={selectedPlanting?.id ?? null}
-              onSelectPlanting={(id) => setSelectedPlantingId(id)}
-            />
-          ) : null}
+          {/* Desktop dock */}
+          <DesktopPlacePanel
+            open={openDesktopPanel}
+            bedLabel={selectedBed ? selectedBed.label : null}
+            role={role}
+            plantings={selectedBedPlantings}
+            selectedPlantingId={selectedPlanting?.id ?? null}
+            onSelectPlanting={(id) => setSelectedPlantingId(id)}
+          />
 
-
-          {/* ✅ Mobile: Button cards sheet */}
+          {/* Mobile bottom sheet */}
           {!isDesktop ? (
             <BottomSheet
               open={true}
@@ -274,9 +319,14 @@ export default function GardenViewer(props: {
                   Pinch to zoom. Drag to pan. Tap a bed (or a pin) to open plant cards.
                 </div>
               ) : selectedBedPlantings.length === 0 ? (
-                <div className="text-sm text-(--rose-muted)">
-                  No plantings match your search for this bed.
-                </div>
+                <>
+                  <div className="text-sm text-(--rose-muted)">
+                    No plantings found for this bed.
+                  </div>
+                  <div className="mt-1 text-xs text-(--rose-muted)">
+                    Debug bedKey: {String(bedKey(selectedBed))}
+                  </div>
+                </>
               ) : (
                 <>
                   <div className="text-xs text-(--rose-muted)">

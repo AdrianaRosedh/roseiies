@@ -1,3 +1,4 @@
+// apps/tenant/app/components/garden/viewer/components/FloatingControls.tsx
 "use client";
 
 export default function FloatingControls(props: { onReset: () => void }) {

@@ -82,6 +82,7 @@ export default function BottomSheet(props: {
   return (
     // ✅ overlay, correct z-index (Tailwind-safe)
     <div className="fixed inset-x-0 bottom-0 z-80 pointer-events-none">
+
       <div
         className="pointer-events-auto mx-auto w-[min(980px,100%)] px-3 pb-3"
         style={{ paddingBottom: "max(env(safe-area-inset-bottom), 12px)" }}

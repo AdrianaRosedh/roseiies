@@ -1,3 +1,4 @@
+// apps/tenant/app/components/garden/viewer/hooks/useMapViewport.ts
 "use client";
 
 import { useCallback, useRef, useState } from "react";
@@ -30,7 +31,6 @@ export function useMapViewport(args: {
 
   const stageRef = useRef<Konva.Stage | null>(null);
 
-  // ✅ safer defaults
   const minScale = 0.4;
   const maxScale = 1.8;
 
@@ -55,22 +55,33 @@ export function useMapViewport(args: {
     stageRef.current = s;
   }, []);
 
-  const zoomAtPoint = useCallback((point: { x: number; y: number }, nextScale: number) => {
-    hasInteractedRef.current = true;
-
-    const scale = clamp(nextScale, minScale, maxScale);
-
-    setVp((prev) => {
-      const old = prev.scale;
-      const wx = (point.x - prev.x) / old;
-      const wy = (point.y - prev.y) / old;
-
-      const x = point.x - wx * scale;
-      const y = point.y - wy * scale;
-
-      return { x, y, scale };
-    });
+  // ✅ use stage-local coords (fixes “fly away” / offset pinch)
+  const clientToStagePoint = useCallback((clientX: number, clientY: number) => {
+    const stage = stageRef.current;
+    if (!stage) return { x: clientX, y: clientY };
+    const rect = stage.container().getBoundingClientRect();
+    return { x: clientX - rect.left, y: clientY - rect.top };
   }, []);
+
+  const zoomAtPoint = useCallback(
+    (point: { x: number; y: number }, nextScale: number) => {
+      hasInteractedRef.current = true;
+
+      const scale = clamp(nextScale, minScale, maxScale);
+
+      setVp((prev) => {
+        const old = prev.scale;
+        const wx = (point.x - prev.x) / old;
+        const wy = (point.y - prev.y) / old;
+
+        const x = point.x - wx * scale;
+        const y = point.y - wy * scale;
+
+        return { x, y, scale };
+      });
+    },
+    []
+  );
 
   const onWheel = useCallback(
     (e: any) => {
@@ -99,18 +110,25 @@ export function useMapViewport(args: {
     lastCenter: { x: number; y: number } | null;
   }>({ lastDist: null, lastCenter: null });
 
-  const onTouchStart = useCallback((e: any) => {
-    const touches = e.evt.touches;
-    if (touches && touches.length >= 2) {
+  const onTouchStart = useCallback(
+    (e: any) => {
+      const touches = e.evt.touches;
+      if (!touches || touches.length < 2) return;
+
+      e.evt.preventDefault();
       setIsPinching(true);
-    }
-  }, []);
+
+      const p1 = clientToStagePoint(touches[0].clientX, touches[0].clientY);
+      const p2 = clientToStagePoint(touches[1].clientX, touches[1].clientY);
+
+      pinchRef.current.lastCenter = center(p1, p2);
+      pinchRef.current.lastDist = dist(p1, p2);
+    },
+    [clientToStagePoint]
+  );
 
   const onTouchMove = useCallback(
     (e: any) => {
-      const stage = stageRef.current;
-      if (!stage) return;
-
       const t1 = e.evt.touches?.[0];
       const t2 = e.evt.touches?.[1];
       if (!t1 || !t2) return;
@@ -118,8 +136,8 @@ export function useMapViewport(args: {
       e.evt.preventDefault();
       hasInteractedRef.current = true;
 
-      const p1 = { x: t1.clientX, y: t1.clientY };
-      const p2 = { x: t2.clientX, y: t2.clientY };
+      const p1 = clientToStagePoint(t1.clientX, t1.clientY);
+      const p2 = clientToStagePoint(t2.clientX, t2.clientY);
 
       const c = center(p1, p2);
       const d = dist(p1, p2);
@@ -133,11 +151,9 @@ export function useMapViewport(args: {
       if (!prevDist || !prevCenter) return;
 
       const ratio = d / prevDist;
-      const nextScale = vp.scale * ratio;
-
-      zoomAtPoint(c, nextScale);
+      zoomAtPoint(c, vp.scale * ratio);
     },
-    [vp.scale, zoomAtPoint]
+    [vp.scale, zoomAtPoint, clientToStagePoint]
   );
 
   const onTouchEnd = useCallback(() => {
@@ -147,7 +163,7 @@ export function useMapViewport(args: {
   }, []);
 
   const fitToRect = useCallback(
-    (rect: { x: number; y: number; w: number; h: number }, pad = 180) => {
+    (rect: { x: number; y: number; w: number; h: number }, pad = padding) => {
       const vw = Math.max(1, viewportWidth);
       const vh = Math.max(1, viewportHeight);
 
@@ -163,19 +179,41 @@ export function useMapViewport(args: {
 
       setVp({ x, y, scale });
     },
-    [viewportWidth, viewportHeight]
+    [viewportWidth, viewportHeight, padding]
   );
 
+  // ✅ use passed padding (no hardcoded 200)
   const fitToContent = useCallback(() => {
-    fitToRect({ x: 0, y: 0, w: contentWidth, h: contentHeight }, 200);
-  }, [fitToRect, contentWidth, contentHeight]);
+    fitToRect({ x: 0, y: 0, w: contentWidth, h: contentHeight }, padding);
+  }, [fitToRect, contentWidth, contentHeight, padding]);
 
+  // Keep for explicit “zoom to bed” actions if you want later
   const focusBed = useCallback(
     (bed: Item) => {
-      // ignoring rotation for fit (fine for now)
-      fitToRect({ x: bed.x, y: bed.y, w: bed.w, h: bed.h }, 240);
+      fitToRect({ x: bed.x, y: bed.y, w: bed.w, h: bed.h }, Math.max(140, padding));
     },
-    [fitToRect]
+    [fitToRect, padding]
+  );
+
+  // ✅ Normal tap behavior: PAN only (no zoom jump)
+  const panToBed = useCallback(
+    (bed: Item) => {
+      hasInteractedRef.current = true;
+
+      setVp((prev) => {
+        const vw = Math.max(1, viewportWidth);
+        const vh = Math.max(1, viewportHeight);
+
+        const cx = bed.x + bed.w / 2;
+        const cy = bed.y + bed.h / 2;
+
+        const x = vw / 2 - cx * prev.scale;
+        const y = vh / 2 - cy * prev.scale;
+
+        return { x, y, scale: prev.scale };
+      });
+    },
+    [viewportWidth, viewportHeight]
   );
 
   return {
@@ -190,6 +228,7 @@ export function useMapViewport(args: {
     zoomAtPoint,
     fitToContent,
     focusBed,
+    panToBed,
     hasInteractedRef,
   };
 }

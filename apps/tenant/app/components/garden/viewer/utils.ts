@@ -26,15 +26,20 @@ export function roleCard(p: GardenPlanting, role: Role): RoleCard {
   return { title: p.crop, subtitle: p.status ?? "kitchen", body: p.kitchen_notes ?? "" };
 }
 
-export function buildPlantingsByBed(plantings: GardenPlanting[]): PlantingsByBed {
+export function buildPlantingsByBed(plantings: GardenPlanting[]) {
   const m = new Map<string, GardenPlanting[]>();
+
   for (const p of plantings) {
-    const arr = m.get(p.bed_id) ?? [];
+    if (!p?.bed_id) continue;
+    const key = String(p.bed_id);
+    const arr = m.get(key) ?? [];
     arr.push(p);
-    m.set(p.bed_id, arr);
+    m.set(key, arr);
   }
+
   return m;
 }
+
 
 export function getBeds(items: Item[]) {
   return items.filter((i) => i.type === "bed");

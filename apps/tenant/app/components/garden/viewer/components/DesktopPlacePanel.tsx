@@ -16,7 +16,7 @@ export default function DesktopPlacePanel(props: {
   if (!props.open) return null;
 
   return (
-    // ✅ wrapper doesn't block map dragging outside the card
+    // ✅ Tailwind-safe z-index + wrapper doesn't block map dragging
     <div className="fixed left-4 top-24 z-70 pointer-events-none">
       <div
         className="pointer-events-auto rounded-2xl border backdrop-blur shadow-sm overflow-hidden"
@@ -30,7 +30,7 @@ export default function DesktopPlacePanel(props: {
         <div className="p-4">
           {!props.bedLabel ? (
             <div className="text-sm" style={{ color: "var(--rose-muted)" }}>
-              Search or click a bed (or a pin) to see what’s growing.
+              Click a bed (or a pin) to see what’s growing.
             </div>
           ) : props.plantings.length === 0 ? (
             <>
