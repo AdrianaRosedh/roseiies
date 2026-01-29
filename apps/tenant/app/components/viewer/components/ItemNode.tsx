@@ -1,13 +1,7 @@
 "use client";
 
 import React from "react";
-import {
-  Group,
-  Rect,
-  Text,
-  Image as KonvaImage,
-  Circle,
-} from "react-konva";
+import { Group, Rect, Text, Image as KonvaImage, Circle } from "react-konva";
 import type { Item } from "../types";
 import { useTreeImages, type TreeVariant } from "../hooks/useTreeImages";
 
@@ -34,15 +28,25 @@ function normalizeTreeVariant(v: any): TreeVariant | null {
 }
 
 function pickTreeVariant(it: Item): TreeVariant {
-  // ✅ Studio stores: meta.tree.variant
   const fromStudio = normalizeTreeVariant((it as any)?.meta?.tree?.variant);
-
-  // fallbacks if older docs used different keys
   const fromAlt1 = normalizeTreeVariant((it as any)?.meta?.tree_variant);
   const fromAlt2 = normalizeTreeVariant((it as any)?.meta?.variant);
-
   return fromStudio ?? fromAlt1 ?? fromAlt2 ?? "tree-03";
 }
+
+// Accent
+const SELECT_STROKE = "rgba(96,165,250,0.95)";
+
+// ✅ Beds: make brown lighter here
+const BED_MUD_A = "#6b4a2e";
+const BED_MUD_B = "#4f3523";
+const BED_STROKE = "rgba(60,40,25,0.35)";
+const BED_INNER = "rgba(255,255,255,0.08)";
+
+// Structure stone
+const STONE_A = "rgba(215,215,215,0.82)";
+const STONE_B = "rgba(190,190,190,0.82)";
+const STONE_STROKE = "rgba(12,18,32,0.16)";
 
 export default function ItemNode(props: {
   item: Item;
@@ -60,57 +64,33 @@ export default function ItemNode(props: {
   const isTree = t === "tree";
   const isStructure = t === "structure";
 
-  // Ink labels (your canvas is paper now)
-  const labelColor = "rgba(12,18,32,0.78)";
-  const mutedInk = "rgba(12,18,32,0.45)";
+  const labelColor = isBed
+    ? "rgba(245,240,232,0.78)"
+    : "rgba(12,18,32,0.78)";
+  const muted = isBed ? "rgba(245,240,232,0.55)" : "rgba(12,18,32,0.45)";
 
-  // Selected ring accent
-  const selectStroke = "rgba(96,165,250,0.95)";
-
-  // Bed styling (warm garden paper/soil)
-  const bedFillA = "rgba(233,226,214,0.92)";
-  const bedFillB = "rgba(215,207,195,0.92)";
-  const bedStroke = "rgba(94,118,88,0.22)";
-
-  // Structure styling (stone)
-  const stoneFillA = "rgba(215,215,215,0.80)";
-  const stoneFillB = "rgba(190,190,190,0.80)";
-  const stoneStroke = "rgba(12,18,32,0.14)";
-
-  // Tree image variant from Studio
   const variant = pickTreeVariant(it);
   const img = treeImages[variant];
 
-  // Corner radius: beds/structures are rounded; trees are image-only (no box)
-  const r = 14;
+  const r = 16;
 
   return (
-    <Group
-      x={it.x}
-      y={it.y}
-      rotation={it.r ?? 0}
-      onClick={props.onSelect}
-      onTap={props.onSelect}
-    >
-      {/* -------------------------
-          TREE (no surrounding box)
-         ------------------------- */}
+    <Group x={it.x} y={it.y} rotation={it.r ?? 0}>
+      {/* ✅ TREE: make the visible node listen + handle clicks */}
       {isTree ? (
         <>
-          {/* Selection halo only when selected (still no box) */}
           {props.selected ? (
             <Circle
               x={w * 0.5}
               y={h * 0.52}
               radius={Math.max(18, Math.min(w, h) * 0.46)}
-              stroke={selectStroke}
+              stroke={SELECT_STROKE}
               strokeWidth={2.5}
               opacity={0.55}
               listening={false}
             />
           ) : null}
 
-          {/* The actual tree image */}
           {img ? (
             <KonvaImage
               image={img}
@@ -118,34 +98,35 @@ export default function ItemNode(props: {
               y={0}
               width={w}
               height={h}
-              listening={false} // clicks handled by Group
+              // ✅ IMPORTANT: must be listening for clicks to work
+              listening={true}
+              onClick={props.onSelect}
+              onTap={props.onSelect}
             />
           ) : (
-            // Fallback while loading images (still no box)
             <Circle
               x={w * 0.5}
               y={h * 0.5}
               radius={Math.max(12, Math.min(w, h) * 0.35)}
               fill="rgba(94,118,88,0.35)"
-              listening={false}
+              // ✅ IMPORTANT: must be listening for clicks to work
+              listening={true}
+              onClick={props.onSelect}
+              onTap={props.onSelect}
             />
           )}
         </>
       ) : (
-        /* -------------------------
-           BED / STRUCTURE
-           (still “garden” styled)
-           ------------------------- */
         <>
           {/* subtle shadow */}
           <Rect
             x={2}
-            y={4}
+            y={5}
             width={w}
             height={h}
             cornerRadius={r}
-            fill="rgba(12,18,32,0.10)"
-            opacity={0.16}
+            fill="rgba(0,0,0,0.18)"
+            opacity={0.18}
             listening={false}
           />
 
@@ -157,16 +138,19 @@ export default function ItemNode(props: {
             fillLinearGradientEndPoint={{ x: w, y: h }}
             fillLinearGradientColorStops={
               isBed
-                ? [0, bedFillA, 1, bedFillB]
+                ? [0, BED_MUD_A, 1, BED_MUD_B]
                 : isStructure
-                ? [0, stoneFillA, 1, stoneFillB]
+                ? [0, STONE_A, 1, STONE_B]
                 : [0, "rgba(210,210,210,0.55)", 1, "rgba(180,180,180,0.55)"]
             }
-            stroke={props.selected ? selectStroke : isBed ? bedStroke : stoneStroke}
-            strokeWidth={props.selected ? 2.25 : 1}
+            stroke={props.selected ? SELECT_STROKE : isBed ? BED_STROKE : STONE_STROKE}
+            strokeWidth={props.selected ? 2.4 : 1.2}
+            // ✅ beds/structures can still be clicked
+            listening={true}
+            onClick={props.onSelect}
+            onTap={props.onSelect}
           />
 
-          {/* inner bed border for depth */}
           {isBed ? (
             <Rect
               x={8}
@@ -174,7 +158,7 @@ export default function ItemNode(props: {
               width={Math.max(0, w - 16)}
               height={Math.max(0, h - 16)}
               cornerRadius={Math.max(10, r - 6)}
-              stroke="rgba(12,18,32,0.08)"
+              stroke={BED_INNER}
               strokeWidth={1}
               listening={false}
             />
@@ -182,9 +166,7 @@ export default function ItemNode(props: {
         </>
       )}
 
-      {/* -------------------------
-          LABELS: only when selected
-         ------------------------- */}
+      {/* Labels only when selected */}
       {props.selected ? (
         <>
           <Text
@@ -195,12 +177,10 @@ export default function ItemNode(props: {
             width={w}
             listening={false}
           />
-
-          {/* optional tiny type hint (remove later) */}
           <Text
             text={isTree ? variant : isBed ? "Bed" : isStructure ? "Structure" : ""}
             fontSize={10}
-            fill={mutedInk}
+            fill={muted}
             x={10}
             y={Math.max(0, h - 18)}
             listening={false}

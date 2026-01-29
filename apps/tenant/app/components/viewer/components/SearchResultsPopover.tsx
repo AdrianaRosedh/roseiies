@@ -1,6 +1,7 @@
 "use client";
 
 export type BedResult = { id: string; label: string };
+
 export type CropResult = {
   plantingId: string;
   crop: string;
@@ -23,63 +24,72 @@ export default function SearchResultsPopover(props: {
   const hasBeds = props.bedResults.length > 0;
   const hasCrops = props.cropResults.length > 0;
 
+  // Roseiies-light palette
+  const BORDER = "rgba(15, 23, 42, 0.12)";
+  const INK = "rgba(15, 23, 42, 0.92)";
+  const MUTED = "rgba(15, 23, 42, 0.58)";
+  const SURFACE = "rgba(255,255,255,0.86)";
+  const CARD = "rgba(255,255,255,0.92)";
+  const HOVER = "rgba(251,113,133,0.12)";
+
   return (
     <div
-      className="mt-2 rounded-2xl border shadow-sm"
       style={{
-        borderColor: "var(--border)",
-        background: "rgba(0,0,0,0.55)",
-        backdropFilter: "blur(12px)",
-        padding: 10,
-        width: 360,
-        maxWidth: "80vw",
+        marginTop: 10,
+        borderRadius: 20,
+        border: `1px solid ${BORDER}`,
+        background: SURFACE,
+        backdropFilter: "blur(14px)",
+        WebkitBackdropFilter: "blur(14px)",
+        padding: 12,
+        width: "100%",
+        boxShadow: "0 14px 34px rgba(0,0,0,0.10)",
       }}
     >
+      {/* Header: NO extra X here (only the header X/back controls search now) */}
       <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-        <div style={{ fontSize: 12, color: "var(--muted)" }}>
+        <div style={{ fontSize: 12, color: MUTED }}>
           Results for “{props.query.trim()}”
         </div>
-        <button
-          onClick={props.onClose}
-          style={{
-            border: "1px solid var(--border)",
-            background: "transparent",
-            color: "var(--fg)",
-            borderRadius: 10,
-            padding: "4px 8px",
-            fontSize: 12,
-            cursor: "pointer",
-          }}
-        >
-          Esc
-        </button>
       </div>
 
       {!hasBeds && !hasCrops ? (
-        <div style={{ marginTop: 10, fontSize: 12, color: "var(--muted)" }}>
+        <div style={{ marginTop: 12, fontSize: 13, color: MUTED }}>
           No matches yet.
         </div>
       ) : (
-        <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+        <div style={{ marginTop: 12, display: "grid", gap: 14 }}>
           {hasBeds ? (
             <div>
-              <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>
+              <div style={{ fontSize: 11, color: MUTED, marginBottom: 8 }}>
                 Beds
               </div>
-              <div style={{ display: "grid", gap: 6 }}>
+
+              <div style={{ display: "grid", gap: 10 }}>
                 {props.bedResults.map((b) => (
                   <button
                     key={b.id}
-                    onClick={() => props.onPickBed(b.id)}
+                    type="button"
+                    onClick={() => props.onPickBed(b.id)} // ✅ clickable
                     style={{
                       textAlign: "left",
-                      border: "1px solid var(--border)",
-                      background: "rgba(255,255,255,0.04)",
-                      color: "var(--fg)",
-                      borderRadius: 14,
-                      padding: "10px 10px",
-                      fontSize: 13,
+                      border: `1px solid ${BORDER}`,
+                      background: CARD,
+                      color: INK,
+                      borderRadius: 18,
+                      padding: "12px 12px",
+                      fontSize: 14,
+                      fontWeight: 800,
                       cursor: "pointer",
+                      boxShadow: "0 10px 22px rgba(0,0,0,0.06)",
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.background =
+                        HOVER;
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.background =
+                        CARD;
                     }}
                   >
                     {b.label}
@@ -91,27 +101,39 @@ export default function SearchResultsPopover(props: {
 
           {hasCrops ? (
             <div>
-              <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>
-                Plantings
+              <div style={{ fontSize: 11, color: MUTED, marginBottom: 8 }}>
+                Ingredients
               </div>
-              <div style={{ display: "grid", gap: 6 }}>
+
+              <div style={{ display: "grid", gap: 10 }}>
                 {props.cropResults.map((c) => (
                   <button
                     key={c.plantingId}
-                    onClick={() => props.onPickCrop(c.bedId, c.plantingId)}
+                    type="button"
+                    onClick={() => props.onPickCrop(c.bedId, c.plantingId)} // ✅ clickable
                     style={{
                       textAlign: "left",
-                      border: "1px solid var(--border)",
-                      background: "rgba(255,255,255,0.04)",
-                      color: "var(--fg)",
-                      borderRadius: 14,
-                      padding: "10px 10px",
-                      fontSize: 13,
+                      border: `1px solid ${BORDER}`,
+                      background: CARD,
+                      color: INK,
+                      borderRadius: 18,
+                      padding: "12px 12px",
                       cursor: "pointer",
+                      boxShadow: "0 10px 22px rgba(0,0,0,0.06)",
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.background =
+                        HOVER;
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.background =
+                        CARD;
                     }}
                   >
-                    <div style={{ fontWeight: 600 }}>{c.crop}</div>
-                    <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
+                    <div style={{ fontSize: 14, fontWeight: 900 }}>
+                      {c.crop}
+                    </div>
+                    <div style={{ fontSize: 12, color: MUTED, marginTop: 4 }}>
                       {c.bedLabel}
                       {c.subtitle ? ` • ${c.subtitle}` : ""}
                     </div>

@@ -1,3 +1,4 @@
+// apps/tenant/app/components/viewer/Viewer.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -19,35 +20,53 @@ import PlantCardsRow from "./components/PlantCardsRow";
 
 import type { MapFeature } from "@/lib/features/types";
 
+const SOIL = "#e6e2dc";
+
 function matchesText(s: any, q: string) {
   const qq = q.trim().toLowerCase();
   if (!qq) return true;
   return String(s ?? "").toLowerCase().includes(qq);
 }
 
-function getBeds(items: Item[]) {
-  return (items ?? []).filter((i) => String(i.type ?? "").toLowerCase() === "bed");
+function isBed(it: Item) {
+  return String(it?.type ?? "").toLowerCase() === "bed";
+}
+function isTree(it: Item) {
+  return String(it?.type ?? "").toLowerCase() === "tree";
 }
 
 function assetDbId(item: any): string {
   return String(item?.meta?.db_id ?? item?.meta?.bed_id ?? "");
 }
 
-type PlantingLike = {
-  id: string;
-  bed_id: string; // DB asset id
-  crop?: string | null;
-  status?: string | null;
-  guest_story?: string | null;
-  gardener_notes?: string | null;
-  kitchen_notes?: string | null;
-};
+function isPlantingFeature(f: MapFeature) {
+  return String(f.kind ?? "").toLowerCase() === "planting";
+}
 
-function featureToPlantingLike(f: MapFeature): PlantingLike {
+function featureMatchesQuery(f: MapFeature, q: string) {
+  const qq = q.trim().toLowerCase();
+  if (!qq) return true;
+
+  const title = String(f.title ?? "").toLowerCase();
+  const subtitle = String(f.subtitle ?? "").toLowerCase();
+
+  const guest = String(f.meta?.guest_story ?? "").toLowerCase();
+  const garden = String(f.meta?.gardener_notes ?? "").toLowerCase();
+  const kitchen = String(f.meta?.kitchen_notes ?? "").toLowerCase();
+
+  return (
+    title.includes(qq) ||
+    subtitle.includes(qq) ||
+    guest.includes(qq) ||
+    garden.includes(qq) ||
+    kitchen.includes(qq)
+  );
+}
+
+function featureToPlantingCard(f: MapFeature) {
   return {
     id: String(f.id),
-    bed_id: String(f.asset_id),
-    crop: f.title ?? null,
+    crop: f.title ?? "Unknown",
     status: f.subtitle ?? null,
     guest_story: f.meta?.guest_story ?? null,
     gardener_notes: f.meta?.gardener_notes ?? null,
@@ -55,25 +74,33 @@ function featureToPlantingLike(f: MapFeature): PlantingLike {
   };
 }
 
-function matchesPlantingLike(p: PlantingLike, q: string) {
-  const qq = q.trim().toLowerCase();
-  if (!qq) return true;
-  return (
-    String(p.crop ?? "").toLowerCase().includes(qq) ||
-    String(p.status ?? "").toLowerCase().includes(qq) ||
-    String(p.guest_story ?? "").toLowerCase().includes(qq) ||
-    String(p.gardener_notes ?? "").toLowerCase().includes(qq) ||
-    String(p.kitchen_notes ?? "").toLowerCase().includes(qq)
-  );
-}
+function MobileRoseiiesFooter() {
+  const ink = "rgba(15,23,42,0.82)";
+  const muted = "rgba(15,23,42,0.52)";
+  const border = "rgba(15,23,42,0.12)";
 
-function glassBoxStyle(): React.CSSProperties {
-  return {
-    borderColor: "rgba(255,255,255,0.10)",
-    background: "rgba(12,18,32,0.55)", // deep ink glass
-    backdropFilter: "blur(14px)",
-    WebkitBackdropFilter: "blur(14px)",
-  };
+  return (
+    <div
+      style={{
+        borderRadius: 18,
+        border: `1px solid ${border}`,
+        background: "rgba(255,255,255,0.70)",
+        padding: 14,
+        textAlign: "center",
+      }}
+    >
+      <div style={{ fontSize: 12, color: muted }}>Powered by</div>
+      <div style={{ fontSize: 14, fontWeight: 900, color: ink, marginTop: 2 }}>
+        Roseiies
+      </div>
+      <div style={{ fontSize: 12, color: muted, marginTop: 10 }}>
+        Privacy · Terms · Legal
+      </div>
+      <div style={{ fontSize: 11, color: "rgba(15,23,42,0.42)", marginTop: 10 }}>
+        © {new Date().getFullYear()} Roseiies. All rights reserved.
+      </div>
+    </div>
+  );
 }
 
 export default function Viewer(props: {
@@ -84,19 +111,20 @@ export default function Viewer(props: {
   title?: string;
   subtitle?: string;
 }) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
-
   const isDesktop = useMediaQuery("(min-width: 900px)");
-  const role = props.role ?? "guest";
+  const _role = props.role ?? "guest";
 
   const { ref: measureRef, size } = useResizeObserver<HTMLDivElement>();
 
   const items = useMemo(
-    () => [...(props.items ?? [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)),
+    () =>
+      [...(props.items ?? [])].sort(
+        (a, b) => (a.order ?? 0) - (b.order ?? 0)
+      ),
     [props.items]
   );
-  const beds = useMemo(() => getBeds(items), [items]);
+
+  const beds = useMemo(() => items.filter(isBed), [items]);
 
   // DB asset id -> canvas bed id
   const dbAssetToCanvasBed = useMemo(() => {
@@ -121,16 +149,6 @@ export default function Viewer(props: {
     return m;
   }, [props.features, dbAssetToCanvasBed]);
 
-  // plantings (adapter so your existing card UI works)
-  const plantingFeatures = useMemo(() => {
-    return (props.features ?? []).filter((f) => String(f.kind ?? "").toLowerCase() === "planting");
-  }, [props.features]);
-
-  const plantingsLike: PlantingLike[] = useMemo(
-    () => plantingFeatures.map(featureToPlantingLike),
-    [plantingFeatures]
-  );
-
   const viewport = useMapViewport({
     viewportWidth: size.width,
     viewportHeight: size.height,
@@ -141,44 +159,51 @@ export default function Viewer(props: {
 
   const didFitRef = useRef(false);
   useEffect(() => {
-    if (!mounted) return;
     if (didFitRef.current) return;
     if (size.width <= 0 || size.height <= 0) return;
     didFitRef.current = true;
     viewport.fitToContent();
-  }, [mounted, size.width, size.height, viewport]);
+  }, [size.width, size.height, viewport]);
 
-  const [selectedBedId, setSelectedBedId] = useState<string | null>(null);
+  // Selection
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [selectedFeatureId, setSelectedFeatureId] = useState<string | null>(null);
 
-  const selectedBed = useMemo(() => beds.find((b) => b.id === selectedBedId) ?? null, [
-    beds,
-    selectedBedId,
-  ]);
+  const selectedItem = useMemo(() => {
+    if (!selectedItemId) return null;
+    return items.find((it) => it.id === selectedItemId) ?? null;
+  }, [items, selectedItemId]);
 
-  const selectedBedFeatures = useMemo(() => {
-    if (!selectedBedId) return [];
-    return featuresByBed.get(selectedBedId) ?? [];
-  }, [featuresByBed, selectedBedId]);
+  const selectedItemIsTree = Boolean(selectedItem && isTree(selectedItem));
+  const selectedItemIsBed = Boolean(selectedItem && isBed(selectedItem));
 
-  const selectedBedPlantingsLike = useMemo(() => {
-    return selectedBedFeatures
-      .filter((f) => String(f.kind ?? "").toLowerCase() === "planting")
-      .map(featureToPlantingLike);
-  }, [selectedBedFeatures]);
+  const selectedItemFeatures = useMemo(() => {
+    if (!selectedItemId) return [];
+    return featuresByBed.get(selectedItemId) ?? [];
+  }, [featuresByBed, selectedItemId]);
 
-  const selectedPlantingLike = useMemo(() => {
+  const selectedPlantingCards = useMemo(() => {
+    if (!selectedItemIsBed) return [];
+    return selectedItemFeatures
+      .filter(isPlantingFeature)
+      .map(featureToPlantingCard);
+  }, [selectedItemFeatures, selectedItemIsBed]);
+
+  const selectedPlantingCard = useMemo(() => {
     if (!selectedFeatureId) return null;
-    const f = selectedBedFeatures.find((x) => x.id === selectedFeatureId) ?? null;
-    if (!f) return null;
-    if (String(f.kind ?? "").toLowerCase() !== "planting") return null;
-    return featureToPlantingLike(f);
-  }, [selectedFeatureId, selectedBedFeatures]);
+    const f = selectedItemFeatures.find(
+      (x) => String(x.id) === selectedFeatureId
+    );
+    if (!f || !isPlantingFeature(f)) return null;
+    return featureToPlantingCard(f);
+  }, [selectedItemFeatures, selectedFeatureId]);
+
+  // ✅ DesktopPlacePanel expects this
+  const selectedPlanting = selectedPlantingCard;
 
   // Search
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
-  const searchBoxRef = useRef<HTMLDivElement | null>(null);
 
   const bedResults: BedResult[] = useMemo(() => {
     const q = query.trim();
@@ -194,55 +219,78 @@ export default function Viewer(props: {
     if (!q) return [];
 
     const out: CropResult[] = [];
-    for (const p of plantingsLike) {
-      if (!matchesPlantingLike(p, q)) continue;
-      const canvasBedId = dbAssetToCanvasBed.get(String(p.bed_id));
+    for (const f of props.features ?? []) {
+      if (!isPlantingFeature(f)) continue;
+      if (!featureMatchesQuery(f, q)) continue;
+
+      const canvasBedId = dbAssetToCanvasBed.get(String(f.asset_id));
       if (!canvasBedId) continue;
+
       const bed = beds.find((b) => b.id === canvasBedId);
+
       out.push({
-        plantingId: p.id,
-        crop: p.crop ?? "Unknown",
+        plantingId: String(f.id),
+        crop: f.title ?? "Unknown",
         bedId: canvasBedId,
         bedLabel: bed?.label ?? "Bed",
-        subtitle: p.status ?? undefined,
+        subtitle: f.subtitle ?? undefined,
       });
     }
 
     const seen = new Set<string>();
-    return out.filter((r) => (seen.has(r.plantingId) ? false : (seen.add(r.plantingId), true))).slice(0, 10);
-  }, [plantingsLike, query, dbAssetToCanvasBed, beds]);
+    return out
+      .filter((r) =>
+        seen.has(r.plantingId) ? false : (seen.add(r.plantingId), true)
+      )
+      .slice(0, 10);
+  }, [props.features, query, dbAssetToCanvasBed, beds]);
 
-  useEffect(() => {
-    function onDown(e: MouseEvent) {
-      const el = searchBoxRef.current;
-      if (!el) return;
-      if (!el.contains(e.target as Node)) setSearchOpen(false);
-    }
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, []);
-
-  const [sheetSnap, setSheetSnap] = useState<"collapsed" | "medium" | "large">("collapsed");
+  // Bottom sheet
+  const [sheetSnap, setSheetSnap] = useState<"collapsed" | "medium" | "large">(
+    "collapsed"
+  );
 
   const clearSelection = () => {
-    setSelectedBedId(null);
+    setSelectedItemId(null);
     setSelectedFeatureId(null);
     setSheetSnap("collapsed");
   };
 
-  const selectBed = (bedId: string) => {
-    setSelectedBedId(bedId);
+  const selectItem = (id: string) => {
+    setSelectedItemId(id);
     setSelectedFeatureId(null);
     if (!isDesktop) setSheetSnap("medium");
   };
 
   const selectFeature = (bedId: string, featureId: string) => {
-    setSelectedBedId(bedId);
+    setSelectedItemId(bedId);
     setSelectedFeatureId(featureId);
     if (!isDesktop) setSheetSnap("large");
   };
 
-  const ready = mounted && size.width > 0 && size.height > 0;
+  const ready = size.width > 0 && size.height > 0;
+
+  // Mobile modes
+  const isSearchingMobile = !isDesktop && (searchOpen || query.trim().length > 0);
+  const selectedVegMobile = !isDesktop ? selectedPlantingCard : null;
+
+  useEffect(() => {
+    if (isDesktop) return;
+    if (isSearchingMobile || selectedVegMobile) setSheetSnap("large");
+  }, [isDesktop, isSearchingMobile, selectedVegMobile]);
+
+  const headerIconBtn: React.CSSProperties = {
+    border: "1px solid rgba(15,23,42,0.12)",
+    background: "rgba(15,23,42,0.06)",
+    color: "rgba(15,23,42,0.62)",
+    borderRadius: 16,
+    width: 44,
+    height: 44,
+    display: "grid",
+    placeItems: "center",
+    cursor: "pointer",
+    flex: "0 0 auto",
+  };
 
   return (
     <div
@@ -255,114 +303,279 @@ export default function Viewer(props: {
         height: "100%",
         overscrollBehavior: "none",
         touchAction: "none",
+        background: SOIL,
       }}
     >
-      {/* Header */}
-      <div className="pointer-events-none absolute left-4 top-4 z-90">
-        <div
-          className="pointer-events-auto rounded-2xl border px-3 py-2"
-          style={glassBoxStyle()}
-        >
-          <div style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.92)" }}>
-            {props.title ?? "Roseiies"}
-          </div>
-          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.60)" }}>
-            {props.subtitle ?? "Interactive view"}
-          </div>
-        </div>
-      </div>
-
-      {/* Search */}
-      <div ref={searchBoxRef} className="pointer-events-none absolute left-4 top-24 z-90">
-        <div className="pointer-events-auto">
-          <SearchBar
-            value={query}
-            onChange={(v) => {
-              setQuery(v);
-              setSearchOpen(true);
-            }}
-            onFocus={() => setSearchOpen(true)}
-            placeholder="Search beds or crops…"
-            onKeyDown={(e) => {
-              if (e.key === "Escape") setSearchOpen(false);
-              if (e.key === "Enter") {
-                if (cropResults[0]) {
-                  selectFeature(cropResults[0].bedId, cropResults[0].plantingId);
-                  setSearchOpen(false);
-                } else if (bedResults[0]) {
-                  selectBed(bedResults[0].id);
-                  setSearchOpen(false);
-                }
-              }
-            }}
-          />
-
-          <SearchResultsPopover
-            open={searchOpen && query.trim().length > 0}
-            query={query}
-            bedResults={bedResults}
-            cropResults={cropResults}
-            onPickBed={(bedId) => selectBed(bedId)}
-            onPickCrop={(bedId, plantingId) => selectFeature(bedId, plantingId)}
-            onClose={() => setSearchOpen(false)}
-          />
-        </div>
-      </div>
-
       {!ready ? (
         <div className="absolute inset-0 grid place-items-center">
-          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.65)" }}>Loading…</div>
+          <div style={{ fontSize: 13, color: "rgba(0,0,0,0.55)" }}>
+            Loading…
+          </div>
         </div>
       ) : (
         <>
           <GardenMap
-            stageRefSetter={() => {}}
+            stageRefSetter={viewport.setStageRef}
             viewport={{ width: size.width, height: size.height }}
             vp={viewport.vp}
             canvas={props.canvas}
             items={items}
             featuresByBed={featuresByBed}
-            selectedBedId={selectedBedId}
-            onSelectBed={selectBed}
+            selectedBedId={selectedItemId}
+            onSelectBed={selectItem}
             onSelectFeature={selectFeature}
             onTapBackground={clearSelection}
             onWheel={viewport.onWheel}
-            onDragEnd={(pos) => viewport.setVp((p) => ({ ...p, x: pos.x, y: pos.y }))}
+            onDragEnd={(pos) =>
+              viewport.setVp((p) => ({ ...p, x: pos.x, y: pos.y }))
+            }
           />
 
-          <DesktopPlacePanel
-            open={isDesktop && Boolean(selectedBedId)}
-            bedLabel={selectedBed ? selectedBed.label : null}
-            plantings={selectedBedPlantingsLike as any}
-            selectedPlantingId={selectedPlantingLike?.id ?? null}
-            onSelectPlanting={(id) => setSelectedFeatureId(id)}
-          />
+          {/* ✅ Desktop dock-left (your collapsible desktop UI) */}
+          {isDesktop ? (
+            <DesktopPlacePanel
+              title={props.title ?? "Olivea"}
+              subtitle={props.subtitle ?? "Garden"}
+              query={query}
+              onQueryChange={setQuery}
+              bedResults={bedResults}
+              cropResults={cropResults}
+              onPickBed={(bedId) => {
+                selectItem(bedId);
+                setQuery(""); // optional: clear after selection
+              }}
+              onPickCrop={(bedId, plantingId) => {
+                selectFeature(bedId, plantingId); // opens veggie detail mode in desktop panel
+                setQuery(""); // optional: clear after selection
+              }}
+              selectedKind={
+                !selectedItem
+                  ? "none"
+                  : selectedItemIsTree
+                  ? "tree"
+                  : selectedItemIsBed
+                  ? "bed"
+                  : "none"
+              }
+              selectedLabel={selectedItem ? selectedItem.label : null}
+              plantings={selectedPlantingCards as any}
+              selectedPlantingId={selectedPlantingCard?.id ?? null}
+              onSelectPlanting={(id) => setSelectedFeatureId(id)}
+              treeMeta={selectedItem?.meta}
+              onClearSelection={clearSelection}
+              // ✅ if you applied my updated DesktopPlacePanel that supports footer + planting detail:
+              selectedPlanting={selectedPlantingCard}
+              onBackFromPlanting={() => setSelectedFeatureId(null)}
+              footer={<MobileRoseiiesFooter />}
+            />
+          ) : null}     
 
+          {/* ✅ Mobile BottomSheet (already modern) */}
           {!isDesktop ? (
             <BottomSheet
               open={true}
               snap={sheetSnap}
               onSnapChange={setSheetSnap}
-              title={selectedBed ? selectedBed.label : "Garden"}
-              subtitle={selectedBed ? `Features: ${selectedBedFeatures.length}` : "Tip"}
+              footer={<MobileRoseiiesFooter />}
+              header={
+                isSearchingMobile ? (
+                  <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <SearchBar
+                        variant="header"
+                        value={query}
+                        onChange={(v) => {
+                          setQuery(v);
+                          setSearchOpen(true);
+                          setSheetSnap("large");
+                        }}
+                        onFocus={() => {
+                          setSearchOpen(true);
+                          setSheetSnap("large");
+                        }}
+                        placeholder="Search beds or crops…"
+                        onKeyDown={(e) => {
+                          if (e.key === "Escape") {
+                            setSearchOpen(false);
+                            setQuery("");
+                          }
+                        }}
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      aria-label="Close search"
+                      onClick={() => {
+                        setQuery("");
+                        setSearchOpen(false);
+                        setSheetSnap(selectedItem ? "medium" : "collapsed");
+                      }}
+                      style={headerIconBtn}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ) : selectedVegMobile ? (
+                  <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                    <button
+                      type="button"
+                      aria-label="Back"
+                      onClick={() => {
+                        setSelectedFeatureId(null);
+                        setSheetSnap("medium");
+                      }}
+                      style={headerIconBtn}
+                    >
+                      ←
+                    </button>
+
+                    <div style={{ minWidth: 0 }}>
+                      <div
+                        style={{
+                          fontSize: 16,
+                          fontWeight: 950,
+                          color: "rgba(15,23,42,0.92)",
+                        }}
+                      >
+                        {selectedVegMobile.crop ?? "Ingredient"}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: "rgba(15,23,42,0.58)",
+                          marginTop: 3,
+                        }}
+                      >
+                        {selectedVegMobile.status ?? "—"}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <div
+                      style={{
+                        fontSize: 18,
+                        fontWeight: 950,
+                        color: "rgba(15,23,42,0.92)",
+                      }}
+                    >
+                      {props.title ?? "Olivea"}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 13,
+                        color: "rgba(15,23,42,0.58)",
+                        marginTop: 3,
+                      }}
+                    >
+                      {props.subtitle ?? "Garden"}
+                    </div>
+                  </div>
+                )
+              }
             >
-              {!selectedBed ? (
-                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.70)" }}>
-                  Drag to pan. Scroll/trackpad to zoom. Tap a bed or a pin to see what’s growing.
+              {isSearchingMobile ? (
+                <SearchResultsPopover
+                  open={true}
+                  query={query}
+                  bedResults={bedResults}
+                  cropResults={cropResults}
+                  onPickBed={(bedId) => {
+                    selectItem(bedId);
+                    setSearchOpen(false);
+                    setQuery("");
+                    setSheetSnap("medium");
+                  }}
+                  onPickCrop={(bedId, plantingId) => {
+                    selectFeature(bedId, plantingId);
+                    setSearchOpen(false);
+                    setQuery("");
+                    setSheetSnap("large");
+                  }}
+                  onClose={() => {
+                    setSearchOpen(false);
+                    setQuery("");
+                    setSheetSnap(selectedItem ? "medium" : "collapsed");
+                  }}
+                />
+              ) : selectedVegMobile ? (
+                <div
+                  style={{
+                    borderRadius: 18,
+                    border: "1px solid rgba(15,23,42,0.12)",
+                    background: "rgba(255,255,255,0.70)",
+                    padding: 14,
+                    boxShadow: "0 10px 24px rgba(0,0,0,0.06)",
+                  }}
+                >
+                  {selectedVegMobile.guest_story ? (
+                    <div
+                      style={{
+                        fontSize: 13,
+                        color: "rgba(15,23,42,0.72)",
+                        lineHeight: 1.45,
+                      }}
+                    >
+                      {selectedVegMobile.guest_story}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 13, color: "rgba(15,23,42,0.55)" }}>
+                      No guest story yet.
+                    </div>
+                  )}
                 </div>
-              ) : selectedBedPlantingsLike.length > 0 ? (
+              ) : !selectedItem ? (
+                <>
+                  <SearchBar
+                    value={query}
+                    onChange={(v) => {
+                      setQuery(v);
+                      setSearchOpen(true);
+                      setSheetSnap("large");
+                    }}
+                    onFocus={() => {
+                      setSearchOpen(true);
+                      setSheetSnap("large");
+                    }}
+                    placeholder="Search beds or crops…"
+                  />
+                  <div
+                    style={{
+                      marginTop: 16,
+                      fontSize: 12,
+                      color: "rgba(15,23,42,0.55)",
+                    }}
+                  >
+                    Tap a bed or tree to see details.
+                  </div>
+                </>
+              ) : selectedItemIsTree ? (
+                <div
+                  style={{
+                    borderRadius: 18,
+                    border: "1px solid rgba(15,23,42,0.12)",
+                    background: "rgba(255,255,255,0.70)",
+                    padding: 14,
+                    boxShadow: "0 10px 24px rgba(0,0,0,0.06)",
+                  }}
+                >
+                  <div style={{ fontSize: 16, fontWeight: 950, color: "rgba(15,23,42,0.92)" }}>
+                    {selectedItem.label ?? "Tree"}
+                  </div>
+                  <div style={{ marginTop: 8, fontSize: 12, color: "rgba(15,23,42,0.58)" }}>
+                    Variant: {(selectedItem as any)?.meta?.tree?.variant ?? "—"}
+                  </div>
+                </div>
+              ) : (
                 <PlantCardsRow
-                  plantings={selectedBedPlantingsLike as any}
-                  selectedPlantingId={selectedPlantingLike?.id ?? null}
+                  plantings={selectedPlantingCards as any}
+                  selectedPlantingId={selectedPlantingCard?.id ?? null}
                   onSelectPlanting={(id) => {
                     setSelectedFeatureId(id);
                     setSheetSnap("large");
                   }}
                 />
-              ) : (
-                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.70)" }}>
-                  No plantings visible for this bed yet.
-                </div>
               )}
             </BottomSheet>
           ) : null}
