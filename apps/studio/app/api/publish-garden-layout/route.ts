@@ -338,6 +338,36 @@ export async function POST(req: Request) {
 
     const itemsWritten = assetsInserted + assetsUpdated;
 
+    // ✅ Upsert the canonical “public link” (don’t fail publish if table not migrated yet)
+    // ✅ Upsert the canonical “public link”
+    step = "upsert_public_resource";
+    const shareUrl = `/r/garden`;    
+
+    const { error: prErr } = await supabase
+      .schema("roseiies")
+      .from("public_resources")
+      .upsert(
+        {
+          workplace_id: workplace.id,
+          slug: "garden",
+          type: "area_view",
+          enabled: true,
+          target: { areaId },
+          meta: {
+            source: "studio.publish-garden-layout",
+            areaName,
+          },
+          updated_at: new Date().toISOString(),
+        } as any,
+        { onConflict: "workplace_id,slug" }
+      );     
+
+    const shareOk = !prErr;
+    const shareError = prErr ? prErr.message : null;     
+
+    // If the table doesn’t exist yet, Supabase returns a relation error.
+    // We don’t want to block publishing; just skip share link creation.
+
     step = "done";
     return NextResponse.json({
       ok: true,
@@ -348,6 +378,11 @@ export async function POST(req: Request) {
       // ✅ canonical permalink (works now, scales later)
       viewUrl: `/view/${layoutId}`,
       layoutId,
+
+      // ✅ new
+      shareUrl: shareOk ? shareUrl : null,
+      shareOk,
+      shareError: prErr ? prErr.message : null,
 
       assetsInserted,
       assetsUpdated,

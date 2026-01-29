@@ -12,11 +12,11 @@ export async function resolveTenantByHost(hostHeader: string): Promise<ResolvedT
   const hostname = (hostHeader ?? "").toLowerCase().split(":")[0];
   const now = Date.now();
 
-  // ✅ Treat any local dev host as "dev"
+  // local dev shortcut
   const isDevHost =
     hostname === "localhost" ||
     hostname.endsWith(".local") ||
-    hostname.includes("localhost"); // allows olivea-localhost
+    hostname.includes("localhost"); // supports olivea-localhost
 
   if (isDevHost && process.env.NEXT_PUBLIC_DEV_TENANT_ID) {
     return {

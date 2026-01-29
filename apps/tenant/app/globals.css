@@ -5,6 +5,21 @@
 @source "./**/*.{ts,tsx}";
 @source "../**/*.{ts,tsx}";
 
+/* ✅ Apple-maps style: no document scrolling */
+html, body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: none;
+}
+
+body {
+  position: fixed; /* iOS rubber-band killer */
+  inset: 0;
+  width: 100%;
+}
+
 /* ===== Tenant background (same family as Studio, slightly calmer) ===== */
 
 .roseiies-tenant-bg {

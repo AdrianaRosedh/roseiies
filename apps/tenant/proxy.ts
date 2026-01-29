@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { resolveTenantByHost } from "@lib/tenant/resolveTenantByHost";
+import { resolveTenantByHost } from "./app/lib/tenant/resolveTenantByHost";
 
 export async function proxy(req: NextRequest) {
   const host = req.headers.get("host") ?? "";
