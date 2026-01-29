@@ -35,7 +35,7 @@ function pickTreeVariant(it: Item): TreeVariant {
 }
 
 // Accent
-const SELECT_STROKE = "rgba(96,165,250,0.95)";
+const SELECT_STROKE = "rgba(0,0,0,0)";
 
 // ✅ Beds: make brown lighter here
 const BED_MUD_A = "#6b4a2e";
@@ -85,7 +85,7 @@ export default function ItemNode(props: {
               y={h * 0.52}
               radius={Math.max(18, Math.min(w, h) * 0.46)}
               stroke={SELECT_STROKE}
-              strokeWidth={2.5}
+              strokeWidth={0}
               opacity={0.55}
               listening={false}
             />
